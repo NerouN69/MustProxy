@@ -12,6 +12,8 @@ from aiohttp import web
 from bot.services.panel_webhook_service import PanelWebhookService, panel_webhook_route
 from sqlalchemy.orm import sessionmaker
 
+from bot.app.web.deeplink_server import DeeplinkServer
+
 from config.settings import Settings
 
 from db.database_setup import init_db_connection
@@ -285,6 +287,7 @@ async def run_bot(settings_param: Settings):
     logging.info(f"--- End Bot Run Mode Decision ---")
 
     web_app_runner = None
+    deeplink_runner = None
     main_tasks = []
 
     # Only run AIOHTTP server for webhook mode
@@ -293,7 +296,31 @@ async def run_bot(settings_param: Settings):
 
     main_tasks.append(asyncio.create_task(web_server_task(), name="AIOHTTPServerTask"))
 
-    # Recurring billing moved to panel webhook (24h before expiry). No periodic task needed here.
+    # Start deeplink server if configured
+    if getattr(settings_param, 'DEEPLINK_SITE_PORT', None):
+        async def deeplink_server_task():
+            try:
+                deeplink_server = DeeplinkServer(
+                    settings=settings_param,
+                    session_factory=local_async_session_factory,
+                    bot_username=actual_bot_username
+                )
+                runner = await deeplink_server.start_server()
+                nonlocal deeplink_runner
+                deeplink_runner = runner
+                
+                # Держим сервер работающим
+                while True:
+                    await asyncio.sleep(3600)  # Sleep for 1 hour, then continue
+                    
+            except Exception as e:
+                logging.error(f"Deeplink server error: {e}", exc_info=True)
+                raise
+
+        main_tasks.append(asyncio.create_task(deeplink_server_task(), name="DeeplinkServerTask"))
+        logging.info(f"Deeplink server will be started on port {settings_param.DEEPLINK_SITE_PORT}")
+    else:
+        logging.info("Deeplink server disabled (DEEPLINK_SITE_PORT not configured)")
 
     logging.info("Starting bot in Webhook mode with AIOHTTP server...")
     logging.info(f"Starting bot with main tasks: {[task.get_name() for task in main_tasks]}")
@@ -304,6 +331,15 @@ async def run_bot(settings_param: Settings):
         logging.info(f"Main bot loop interrupted/cancelled: {type(e).__name__} - {e}")
     finally:
         logging.info("Initiating final bot shutdown sequence...")
+        
+        # Cleanup deeplink server
+        if deeplink_runner:
+            try:
+                await deeplink_runner.cleanup()
+                logging.info("Deeplink server runner cleaned up.")
+            except Exception as e:
+                logging.error(f"Error cleaning up deeplink runner: {e}")
+        
         for task in main_tasks:
             if task and not task.done():
                 task.cancel()

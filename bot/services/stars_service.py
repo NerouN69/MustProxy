@@ -174,3 +174,31 @@ class StarsService:
         except Exception as e:
             logging.error(f"Failed to send stars payment notification: {e}")
 
+        try:
+            from bot.services.yandex_metrika_service import YandexMetrikaService
+            
+            # Получаем username бота
+            bot_username = "unknown_bot"
+            try:
+                bot_info = await self.bot.get_me()
+                bot_username = bot_info.username or "unknown_bot"
+            except Exception:
+                pass
+            
+            metrika_service = YandexMetrikaService(self.settings, bot_username)
+            
+            if metrika_service.configured:
+                await metrika_service.send_full_conversion_chain(
+                    session=session,
+                    user_id=message.from_user.id,
+                    payment_amount=float(stars_amount),
+                    payment_id=str(payment_db_id),
+                    subscription_months=months
+                )
+                logging.info(f"Sent Yandex Metrika conversion for Stars payment, user {message.from_user.id}")
+            else:
+                logging.debug("Yandex Metrika not configured, skipping Stars conversion tracking")
+                
+        except Exception as e_metrika:
+            # Не останавливаем обработку платежа из-за ошибки в метрике
+            logging.error(f"Failed to send Yandex Metrika conversion for Stars payment, user {message.from_user.id}: {e_metrika}", exc_info=True)

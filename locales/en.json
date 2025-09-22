@@ -432,5 +432,28 @@
   "admin_ads_delete_button": "🗑 Delete campaign",
   "admin_ads_delete_confirm": "Are you sure you want to delete campaign #{id}? This action is irreversible.",
   "admin_ads_deleted_success": "Campaign deleted.",
-  "admin_ads_not_found": "Campaign not found."
+  "admin_ads_not_found": "Campaign not found.",
+
+  "yandex_tracking_enabled": "🎯 Yandex.Direct conversion tracking enabled",
+  "yandex_conversion_sent": "📊 Purchase data sent to Yandex.Metrica",
+  "yandex_tracking_error": "⚠️ Error while sending data to Yandex.Metrica",
+
+  "admin_yandex_stats": "📊 Yandex.Metrica Statistics",
+  "admin_yandex_total": "Total tracked: {total}",
+  "admin_yandex_sent": "Conversions sent: {sent}",
+  "admin_yandex_pending": "Pending conversions: {pending}",
+  "admin_yandex_not_configured": "Yandex.Metrica is not configured",
+  "admin_yandex_test_success": "Yandex.Metrica test successful",
+  "admin_yandex_test_failed": "Yandex.Metrica test failed",
+
+  "deeplink_welcome": "Welcome!",
+  "deeplink_description": "You will now be redirected to our Telegram bot to get your subscription.",
+  "deeplink_open_telegram": "Open in Telegram",
+  "deeplink_tracking_enabled": "User is being tracked",
+  "deeplink_tracking_disabled": "Client ID not found. Conversion tracking will be unavailable.",
+  "deeplink_redirecting": "Redirecting to Telegram...",
+
+  "metrika_pageview_sent": "Pageview registered in Yandex.Metrica",
+  "metrika_conversion_sent": "Conversion sent to Yandex.Metrica",
+  "metrika_ecommerce_sent": "Purchase data sent to Yandex.Metrica"
 }

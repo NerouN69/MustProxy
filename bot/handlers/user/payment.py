@@ -116,6 +116,36 @@ async def process_successful_payment(session: AsyncSession, bot: Bot,
                 payment_info_from_webhook.get("id"))
 
             return
+        
+        try:
+            from bot.services.yandex_metrika_service import YandexMetrikaService
+            
+            # Получаем username бота из диспетчера или создаем новый запрос
+            bot_username = "unknown_bot"
+            try:
+                bot_info = await bot.get_me()
+                bot_username = bot_info.username or "unknown_bot"
+            except Exception:
+                pass
+            
+            metrika_service = YandexMetrikaService(settings, bot_username)
+            
+            if metrika_service.configured:
+                await metrika_service.send_full_conversion_chain(
+                    session=session,
+                    user_id=user_id,
+                    payment_amount=payment_value,
+                    payment_id=str(payment_db_id),
+                    subscription_months=subscription_months
+                )
+                logging.info(f"Sent Yandex Metrika conversion for user {user_id}, payment {payment_db_id}")
+            else:
+                logging.debug("Yandex Metrika not configured, skipping conversion tracking")
+                
+        except Exception as e_metrika:
+            # Не останавливаем обработку платежа из-за ошибки в метрике
+            logging.error(f"Failed to send Yandex Metrika conversion for user {user_id}: {e_metrika}", exc_info=True)
+
 
     except (TypeError, ValueError) as e:
         logging.error(

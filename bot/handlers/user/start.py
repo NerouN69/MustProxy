@@ -118,7 +118,8 @@ async def send_main_menu(target_event: Union[types.Message,
 @router.message(CommandStart())
 @router.message(CommandStart(magic=F.args.regexp(r"^ref_(\d+)$").as_("ref_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^promo_(\w+)$").as_("promo_match")))
-@router.message(CommandStart(magic=F.args.regexp(r"^(?!ref_|promo_)([A-Za-z0-9_\-]{2,64})$").as_("ad_param_match")))
+@router.message(CommandStart(magic=F.args.regexp(r"^yandex_(.+)$").as_("yandex_match")))
+@router.message(CommandStart(magic=F.args.regexp(r"^(?!ref_|promo_|yandex_)([A-Za-z0-9_\-]{2,64})$").as_("ad_param_match")))
 async def start_command_handler(message: types.Message,
                                 state: FSMContext,
                                 settings: Settings,
@@ -127,6 +128,7 @@ async def start_command_handler(message: types.Message,
                                 session: AsyncSession,
                                 ref_match: Optional[re.Match] = None,
                                 promo_match: Optional[re.Match] = None,
+                                yandex_match: Optional[re.Match] = None,
                                 ad_param_match: Optional[re.Match] = None):
     await state.clear()
     current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
@@ -140,6 +142,7 @@ async def start_command_handler(message: types.Message,
     referred_by_user_id: Optional[int] = None
     promo_code_to_apply: Optional[str] = None
     ad_start_param: Optional[str] = None
+    yandex_client_id: Optional[str] = None
 
     if ref_match:
         potential_referrer_id = int(ref_match.group(1))
@@ -148,6 +151,9 @@ async def start_command_handler(message: types.Message,
     elif promo_match:
         promo_code_to_apply = promo_match.group(1)
         logging.info(f"User {user_id} started with promo code: {promo_code_to_apply}")
+    elif yandex_match:
+        yandex_client_id = yandex_match.group(1)
+        logging.info(f"User {user_id} started with Yandex client_id: {yandex_client_id}")
     elif ad_param_match:
         ad_start_param = ad_param_match.group(1)
         logging.info(f"User {user_id} started with ad start param: {ad_start_param}")
@@ -184,7 +190,6 @@ async def start_command_handler(message: types.Message,
                 except Exception as e:
                     logging.error(f"Failed to send new user notification: {e}")
         except Exception as e_create:
-
             logging.error(
                 f"Failed to add new user {user_id} to session: {e_create}",
                 exc_info=True)
@@ -195,7 +200,6 @@ async def start_command_handler(message: types.Message,
         if db_user.language_code != current_lang:
             update_payload["language_code"] = current_lang
         # Set referral only if not already set AND user is not currently active.
-        # This allows previously subscribed but currently inactive users to be attributed.
         if referred_by_user_id and db_user.referred_by_id is None:
             try:
                 is_active_now = await subscription_service.has_active_subscription(session, user_id)
@@ -213,15 +217,50 @@ async def start_command_handler(message: types.Message,
         if update_payload:
             try:
                 await user_dal.update_user(session, user_id, update_payload)
-
                 logging.info(
                     f"Updated existing user {user_id} in session: {update_payload}"
                 )
             except Exception as e_update:
-
                 logging.error(
                     f"Failed to update existing user {user_id} in session: {e_update}",
                     exc_info=True)
+
+    # Обработка Yandex Client ID
+    if yandex_client_id:
+        try:
+            from db.dal import yandex_tracking_dal
+            from bot.services.yandex_metrika_service import YandexMetrikaService
+            
+            bot_info = await message.bot.get_me()
+            bot_username = bot_info.username or "unknown_bot"
+            metrika_service = YandexMetrikaService(settings, bot_username)
+            
+            if not metrika_service._validate_client_id(yandex_client_id):
+                logging.warning(f"Invalid Yandex client_id format received: {yandex_client_id} from user {user_id}")
+            else:
+                tracking = await yandex_tracking_dal.create_yandex_tracking(
+                    session, user_id, yandex_client_id, settings.YANDEX_METRIKA_COUNTER_ID
+                )
+                if tracking:
+                    await session.commit()
+                    logging.info(f"Yandex tracking created/updated for user {user_id} with client_id {yandex_client_id}")
+                    
+                    if metrika_service.configured:
+                        pageview_success = await metrika_service.send_pageview(
+                            client_id=yandex_client_id,
+                            page_url=f"https://t.me/{bot_username}",
+                            page_title="Telegram Bot Visit",
+                            referrer="https://yandex.ru"
+                        )
+                        if pageview_success:
+                            logging.info(f"Sent pageview to Yandex Metrika for user {user_id}")
+                        else:
+                            logging.error(f"Failed to send pageview for user {user_id}")
+                else:
+                    await session.rollback()
+        except Exception as e:
+            logging.error(f"Failed to process Yandex client_id: {e}", exc_info=True)
+            await session.rollback()
 
     # Attribute user to ad campaign if start param provided
     if ad_start_param:
@@ -240,7 +279,13 @@ async def start_command_handler(message: types.Message,
 
     # Send welcome message if not disabled
     if not settings.DISABLE_WELCOME_MESSAGE:
-        await message.answer(_(key="welcome", user_name=hd.quote(user.full_name)))
+        welcome_text = _(key="welcome", user_name=hd.quote(user.full_name))
+        
+        # Если пришел с Яндекс.Директа, добавляем специальное сообщение
+        if yandex_client_id:
+            welcome_text += f"\n\n{_('yandex_tracking_enabled')}"
+        
+        await message.answer(welcome_text)
     
     # Auto-apply promo code if provided via start parameter
     if promo_code_to_apply:

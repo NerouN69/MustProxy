@@ -12,6 +12,7 @@ from bot.services.stars_service import StarsService
 from bot.services.tribute_service import TributeService
 from bot.services.crypto_pay_service import CryptoPayService
 from bot.services.panel_webhook_service import PanelWebhookService
+from bot.services.yandex_metrika_service import YandexMetrikaService
 
 
 def build_core_services(
@@ -53,6 +54,7 @@ def build_core_services(
         bot_username_for_default_return=bot_username_for_default_return,
         settings_obj=settings,
     )
+    yandex_metrika_service = YandexMetrikaService(settings)
 
     # Wire services that depend on each other
     try:
@@ -73,6 +75,7 @@ def build_core_services(
         "tribute_service": tribute_service,
         "panel_webhook_service": panel_webhook_service,
         "yookassa_service": yookassa_service,
+        "yandex_metrika_service": yandex_metrika_service,
     }
 
 

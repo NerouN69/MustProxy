@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     # Single toggle to enable recurring payments (saving cards, managing payment methods, auto-renew)
     YOOKASSA_AUTOPAYMENTS_ENABLED: bool = Field(default=False)
 
+    # Yandex Metrika Measurement Protocol
+    YANDEX_METRIKA_COUNTER_ID: Optional[str] = None
+    YANDEX_METRIKA_TOKEN: Optional[str] = None
+    
+    # Настройки для диплинк сайта
+    DEEPLINK_SITE_HOST: str = "0.0.0.0"
+    DEEPLINK_SITE_PORT: int = 8080
+    DEEPLINK_SITE_BASE_URL: Optional[str] = None  # Внешний URL сайта
+
     WEBHOOK_BASE_URL: Optional[str] = None
 
     CRYPTOPAY_TOKEN: Optional[str] = None
