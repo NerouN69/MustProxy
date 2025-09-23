@@ -2,6 +2,9 @@
   "welcome": "Welcome, {user_name}!",
   "main_menu_greeting": "Hi, {user_name}! 👋\nWhat would you like to do?",
 
+  "main_menu_subscription_inactive": "Hello, {user_name}! 👋\n\nSubscription: 🔴 Inactive",
+  "main_menu_subscription_active": "Hello, {user_name}! 👋\n\nSubscription: 🟢 Active\nActive until: {end_date}\n\nAvailable: 5 devices",
+
   "menu_activate_trial_button": "🆓 Free Trial",
   "menu_subscribe_inline": "🚀 Purchase",
   "menu_my_subscription_inline": "🔐 My Subscription",

@@ -4,6 +4,7 @@ from aiogram import Router, F, types, Bot
 from aiogram.utils.text_decorations import html_decoration as hd
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
+from aiogram.types import FSInputFile
 from typing import Optional, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
@@ -21,8 +22,7 @@ from bot.middlewares.i18n import JsonI18n
 router = Router(name="user_start_router")
 
 
-async def send_main_menu(target_event: Union[types.Message,
-                                             types.CallbackQuery],
+async def send_main_menu(target_event: Union[types.Message, types.CallbackQuery],
                          settings: Settings,
                          i18n_data: dict,
                          subscription_service: SubscriptionService,
@@ -54,26 +54,38 @@ async def send_main_menu(target_event: Union[types.Message,
 
     show_trial_button_in_menu = False
     if settings.TRIAL_ENABLED:
-        if hasattr(
-                subscription_service, 'has_had_any_subscription') and callable(
-                    getattr(subscription_service, 'has_had_any_subscription')):
-            if not await subscription_service.has_had_any_subscription(
-                    session, user_id):
+        if hasattr(subscription_service, 'has_had_any_subscription') and callable(
+                getattr(subscription_service, 'has_had_any_subscription')):
+            if not await subscription_service.has_had_any_subscription(session, user_id):
                 show_trial_button_in_menu = True
         else:
             logging.error(
                 "Method has_had_any_subscription is missing in SubscriptionService for send_main_menu!"
             )
 
-    text = _(key="main_menu_greeting", user_name=user_full_name)
+    # Проверяем подписку
+    active = await subscription_service.get_active_subscription_details(session, user_id)
+
+    is_active = (
+        active
+        and active.get("status_from_panel") == "ACTIVE"
+        and active.get("end_date")
+        and active["end_date"] > datetime.now(timezone.utc)
+    )
+
+    if is_active:
+        end_date = active["end_date"].strftime("%d.%m.%Y %H:%M")
+        text = _(key="main_menu_subscription_active", user_name=user_full_name, end_date=end_date)
+    else:
+        text = _(key="main_menu_subscription_inactive", user_name=user_full_name)
+
     reply_markup = get_main_menu_inline_keyboard(current_lang, i18n, settings,
                                                  show_trial_button_in_menu)
 
     target_message_obj: Optional[types.Message] = None
     if isinstance(target_event, types.Message):
         target_message_obj = target_event
-    elif isinstance(target_event,
-                    types.CallbackQuery) and target_event.message:
+    elif isinstance(target_event, types.CallbackQuery) and target_event.message:
         target_message_obj = target_event.message
 
     if not target_message_obj:
@@ -81,36 +93,59 @@ async def send_main_menu(target_event: Union[types.Message,
             f"send_main_menu: target_message_obj is None for event from user {user_id}."
         )
         if isinstance(target_event, types.CallbackQuery):
-            await target_event.answer(_("error_displaying_menu"),
-                                      show_alert=True)
+            await target_event.answer(_("error_displaying_menu"), show_alert=True)
         return
 
     try:
-        if is_edit:
-            await target_message_obj.edit_text(text, reply_markup=reply_markup)
+        # Удаляем предыдущее сообщение бота (если оно есть)
+        try:
+            await target_message_obj.delete()
+        except Exception as e_del:
+            logging.debug(f"Не удалось удалить старое сообщение у {user_id}: {e_del}")
+
+        # Отправляем новое меню с картинкой
+        image_path = "/app/locales/main_menu.jpg"
+        photo = FSInputFile(path=image_path)
+
+        # Выбираем правильный объект для отправки сообщения
+        send_obj = target_event.from_user if isinstance(target_event, types.CallbackQuery) else target_event
+
+        # Если это CallbackQuery, используем бота из сообщения
+        if isinstance(target_event, types.CallbackQuery):
+            await target_event.message.answer_photo(
+                photo=photo,
+                caption=text,
+                reply_markup=reply_markup
+            )
         else:
-            await target_message_obj.answer(text, reply_markup=reply_markup)
+            # Если это обычное сообщение
+            await target_event.answer_photo(
+                photo=photo,
+                caption=text,
+                reply_markup=reply_markup
+            )
 
         if isinstance(target_event, types.CallbackQuery):
             try:
                 await target_event.answer()
             except Exception:
                 pass
-    except Exception as e_send_edit:
-        logging.warning(
-            f"Failed to send/edit main menu (user: {user_id}, is_edit: {is_edit}): {type(e_send_edit).__name__} - {e_send_edit}."
-        )
-        if is_edit and target_message_obj:
-            try:
-                await target_message_obj.answer(text, reply_markup=reply_markup)
-            except Exception as e_send_new:
-                logging.error(
-                    f"Also failed to send new main menu message for user {user_id}: {e_send_new}"
-                )
+
+    except Exception as e_send:
+        logging.error(f"Ошибка при отправке главного меню пользователю {user_id}: {type(e_send).__name__} - {e_send}")
+        
+        # Fallback: отправляем без картинки
+        try:
+            if isinstance(target_event, types.CallbackQuery):
+                await target_event.message.answer(text, reply_markup=reply_markup)
+            else:
+                await target_event.answer(text, reply_markup=reply_markup)
+        except Exception as e_fallback:
+            logging.error(f"Fallback также не сработал для {user_id}: {e_fallback}")
+            
         if isinstance(target_event, types.CallbackQuery):
             try:
-                await target_event.answer(
-                    _("error_occurred_try_again") if is_edit else None)
+                await target_event.answer(_("error_occurred_try_again"), show_alert=True)
             except Exception:
                 pass
 

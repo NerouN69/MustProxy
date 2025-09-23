@@ -47,23 +47,33 @@ async def prompt_promo_code_input(callback: types.CallbackQuery,
         return
 
     try:
-        await callback.message.edit_text(
-            text=_(key="promo_code_prompt"),
-            reply_markup=get_back_to_main_menu_markup(current_lang, i18n))
-    except Exception as e_edit:
-        logging.warning(
-            f"Failed to edit message for promo prompt: {e_edit}. Sending new one."
-        )
+        # Удаляем предыдущее сообщение
+        try:
+            await callback.message.delete()
+        except Exception as e_del:
+            logging.debug(f"Не удалось удалить старое сообщение у {callback.from_user.id}: {e_del}")
+
+        # Отправляем новое сообщение
         await callback.message.answer(
             text=_(key="promo_code_prompt"),
             reply_markup=get_back_to_main_menu_markup(current_lang, i18n))
+
+    except Exception as e_send:
+        logging.error(
+            f"Failed to send promo code prompt for user {callback.from_user.id}: {e_send}")
+        # Fallback: пытаемся отредактировать старое сообщение
+        try:
+            await callback.message.edit_text(
+                text=_(key="promo_code_prompt"),
+                reply_markup=get_back_to_main_menu_markup(current_lang, i18n))
+        except Exception as e_fallback:
+            logging.error(f"Fallback edit also failed: {e_fallback}")
 
     await callback.answer()
     await state.set_state(UserPromoStates.waiting_for_promo_code)
     logging.info(
         f"User {callback.from_user.id} entered state UserPromoStates.waiting_for_promo_code. "
         f"FSM state: {await state.get_state()}")
-
 
 @router.message(UserPromoStates.waiting_for_promo_code, F.text)
 async def process_promo_code_input(message: types.Message, state: FSMContext,

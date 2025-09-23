@@ -38,7 +38,8 @@ async def referral_command_handler(event: Union[types.Message,
         )
         await target_message_obj.answer(
             "Service error. Please try again later.")
-        if isinstance(event, types.CallbackQuery): await event.answer()
+        if isinstance(event, types.CallbackQuery): 
+            await event.answer()
         return
 
     _ = lambda key, **kwargs: i18n.gettext(current_lang, key, **kwargs)
@@ -50,13 +51,15 @@ async def referral_command_handler(event: Union[types.Message,
         logging.error(
             f"Failed to get bot info for referral link: {e_bot_info}")
         await target_message_obj.answer(_("error_generating_referral_link"))
-        if isinstance(event, types.CallbackQuery): await event.answer()
+        if isinstance(event, types.CallbackQuery): 
+            await event.answer()
         return
 
     if not bot_username:
         logging.error("Bot username is None, cannot generate referral link.")
         await target_message_obj.answer(_("error_generating_referral_link"))
-        if isinstance(event, types.CallbackQuery): await event.answer()
+        if isinstance(event, types.CallbackQuery): 
+            await event.answer()
         return
 
     inviter_user_id = event.from_user.id
@@ -65,7 +68,6 @@ async def referral_command_handler(event: Union[types.Message,
 
     bonus_info_parts = []
     if settings.subscription_options:
-
         for months_period_key, _price in sorted(
                 settings.subscription_options.items()):
 
@@ -95,23 +97,48 @@ async def referral_command_handler(event: Union[types.Message,
     from bot.keyboards.inline.user_keyboards import get_referral_link_keyboard
     reply_markup_val = get_referral_link_keyboard(current_lang, i18n)
 
-    if isinstance(event, types.Message):
-        await event.answer(text,
-                           reply_markup=reply_markup_val,
-                           disable_web_page_preview=True)
-    elif isinstance(event, types.CallbackQuery) and event.message:
+    try:
+        # Удаляем предыдущее сообщение
         try:
-            await event.message.edit_text(text,
-                                          reply_markup=reply_markup_val,
-                                          disable_web_page_preview=True)
-        except Exception as e_edit:
-            logging.warning(
-                f"Failed to edit message for referral info: {e_edit}. Sending new one."
-            )
+            await target_message_obj.delete()
+        except Exception as e_del:
+            logging.debug(f"Не удалось удалить старое сообщение у {event.from_user.id}: {e_del}")
+
+        # Отправляем новое сообщение
+        if isinstance(event, types.Message):
+            await event.answer(text,
+                               reply_markup=reply_markup_val,
+                               disable_web_page_preview=True)
+        elif isinstance(event, types.CallbackQuery) and event.message:
             await event.message.answer(text,
                                        reply_markup=reply_markup_val,
                                        disable_web_page_preview=True)
-        await event.answer()
+
+        if isinstance(event, types.CallbackQuery):
+            await event.answer()
+
+    except Exception as e_send:
+        logging.error(
+            f"Failed to send referral info for user {event.from_user.id}: {e_send}")
+        
+        # Fallback: пытаемся отредактировать старое сообщение
+        try:
+            if isinstance(event, types.CallbackQuery) and event.message:
+                await event.message.edit_text(text,
+                                              reply_markup=reply_markup_val,
+                                              disable_web_page_preview=True)
+            else:
+                await target_message_obj.answer(text,
+                                               reply_markup=reply_markup_val,
+                                               disable_web_page_preview=True)
+        except Exception as e_fallback:
+            logging.error(f"Fallback also failed for user {event.from_user.id}: {e_fallback}")
+
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data.startswith("referral_action:"))

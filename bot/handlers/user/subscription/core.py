@@ -22,7 +22,9 @@ from db.models import Subscription
 router = Router(name="user_subscription_core_router")
 
 
-async def display_subscription_options(event: Union[types.Message, types.CallbackQuery], i18n_data: dict, settings: Settings, session: AsyncSession):
+async def display_subscription_options(event: Union[types.Message, types.CallbackQuery], 
+                                        i18n_data: dict, settings: Settings, 
+                                        session: AsyncSession):
     current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
     i18n: Optional[JsonI18n] = i18n_data.get("i18n_instance")
 
@@ -57,17 +59,42 @@ async def display_subscription_options(event: Union[types.Message, types.Callbac
                 pass
         return
 
-    if isinstance(event, types.CallbackQuery):
+    try:
+        # Удаляем предыдущее сообщение
         try:
-            await target_message_obj.edit_text(text_content, reply_markup=reply_markup)
-        except Exception:
-            await target_message_obj.answer(text_content, reply_markup=reply_markup)
+            await target_message_obj.delete()
+        except Exception as e_del:
+            logging.debug(f"Не удалось удалить старое сообщение у {event.from_user.id}: {e_del}")
+
+        # Отправляем новое сообщение
+        if isinstance(event, types.CallbackQuery):
+            await event.message.answer(text_content, reply_markup=reply_markup)
+        else:
+            await event.answer(text_content, reply_markup=reply_markup)
+
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
+
+    except Exception as e_send:
+        logging.error(f"Failed to send subscription options for user {event.from_user.id}: {e_send}")
+        
+        # Fallback: пытаемся отредактировать старое сообщение
         try:
-            await event.answer()
-        except Exception:
-            pass
-    else:
-        await target_message_obj.answer(text_content, reply_markup=reply_markup)
+            if isinstance(event, types.CallbackQuery):
+                await target_message_obj.edit_text(text_content, reply_markup=reply_markup)
+            else:
+                await target_message_obj.answer(text_content, reply_markup=reply_markup)
+        except Exception as e_fallback:
+            logging.error(f"Fallback edit also failed for user {event.from_user.id}: {e_fallback}")
+
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data == "main_action:subscribe")
@@ -110,17 +137,42 @@ async def my_subscription_command_handler(
 
         kb = InlineKeyboardMarkup(inline_keyboard=[[buy_button], *back_markup.inline_keyboard])
 
-        if isinstance(event, types.CallbackQuery):
+        try:
+            # Удаляем предыдущее сообщение
             try:
-                await event.answer()
-            except Exception:
-                pass
-            try:
-                await event.message.edit_text(text, reply_markup=kb)
-            except Exception:
+                await target.delete()
+            except Exception as e_del:
+                logging.debug(f"Не удалось удалить старое сообщение у {event.from_user.id}: {e_del}")
+
+            # Отправляем новое сообщение
+            if isinstance(event, types.CallbackQuery):
                 await event.message.answer(text, reply_markup=kb)
-        else:
-            await event.answer(text, reply_markup=kb)
+            else:
+                await event.answer(text, reply_markup=kb)
+
+            if isinstance(event, types.CallbackQuery):
+                try:
+                    await event.answer()
+                except Exception:
+                    pass
+
+        except Exception as e_send:
+            logging.error(f"Failed to send subscription info (no active) for user {event.from_user.id}: {e_send}")
+            
+            # Fallback: пытаемся отредактировать старое сообщение
+            try:
+                if isinstance(event, types.CallbackQuery):
+                    await event.message.edit_text(text, reply_markup=kb)
+                else:
+                    await event.answer(text, reply_markup=kb)
+            except Exception as e_fallback:
+                logging.error(f"Fallback edit also failed for user {event.from_user.id}: {e_fallback}")
+
+            if isinstance(event, types.CallbackQuery):
+                try:
+                    await event.answer()
+                except Exception:
+                    pass
         return
 
     end_date = active.get("end_date")
@@ -197,23 +249,63 @@ async def my_subscription_command_handler(
         pass
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
 
-    if isinstance(event, types.CallbackQuery):
+    try:
+        # Удаляем предыдущее сообщение
         try:
-            await event.answer()
-        except Exception:
-            pass
-        try:
-            await event.message.edit_text(text + tribute_hint, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
-        except Exception:
-            await bot.send_message(
-                chat_id=target.chat.id,
-                text=text + tribute_hint,
-                reply_markup=markup,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
+            await target.delete()
+        except Exception as e_del:
+            logging.debug(f"Не удалось удалить старое сообщение у {event.from_user.id}: {e_del}")
+
+        # Отправляем новое сообщение
+        if isinstance(event, types.CallbackQuery):
+            await event.message.answer(
+                text + tribute_hint, 
+                reply_markup=markup, 
+                parse_mode="HTML", 
+                disable_web_page_preview=True
             )
-    else:
-        await target.answer(text + tribute_hint, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
+        else:
+            await target.answer(
+                text + tribute_hint, 
+                reply_markup=markup, 
+                parse_mode="HTML", 
+                disable_web_page_preview=True
+            )
+
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
+
+    except Exception as e_send:
+        logging.error(f"Failed to send subscription info for user {event.from_user.id}: {e_send}")
+        
+        # Fallback: пытаемся отредактировать старое сообщение или отправить через bot.send_message
+        try:
+            if isinstance(event, types.CallbackQuery):
+                await event.message.edit_text(
+                    text + tribute_hint, 
+                    reply_markup=markup, 
+                    parse_mode="HTML", 
+                    disable_web_page_preview=True
+                )
+            else:
+                await bot.send_message(
+                    chat_id=target.chat.id,
+                    text=text + tribute_hint,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+        except Exception as e_fallback:
+            logging.error(f"Fallback also failed for user {event.from_user.id}: {e_fallback}")
+
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer()
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data.startswith("toggle_autorenew:"))
