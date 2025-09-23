@@ -268,8 +268,15 @@ class YandexTracking(Base):
     user_id = Column(BigInteger, ForeignKey("users.user_id"), nullable=False, index=True)
     yandex_client_id = Column(String, nullable=False, index=True)
     counter_id = Column(String, nullable=True)  # Номер счетчика Яндекс.Метрики
+    
+    # Информация о визитах
     first_visit_time = Column(DateTime(timezone=True), server_default=func.now())
+    last_visit_time = Column(DateTime(timezone=True), nullable=True)
+    visit_count = Column(Integer, default=1)
+    
+    # Устаревшее поле, оставляем для совместимости
     conversion_sent = Column(Boolean, default=False, index=True)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     user = relationship("User")
@@ -279,4 +286,22 @@ class YandexTracking(Base):
     )
 
     def __repr__(self):
-        return f"<YandexTracking(user_id={self.user_id}, client_id='{self.yandex_client_id}')>"
+        return f"<YandexTracking(user_id={self.user_id}, client_id='{self.yandex_client_id}', visits={self.visit_count})>"
+
+
+class YandexConversion(Base):
+    """Таблица для хранения отправленных конверсий"""
+    __tablename__ = "yandex_conversions"
+    
+    conversion_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("users.user_id"), nullable=False, index=True)
+    payment_id = Column(String, nullable=False, index=True)  # ID платежа в системе
+    amount = Column(Float, nullable=False)
+    sent_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Связи
+    user = relationship("User")
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'payment_id', name='uq_user_payment_conversion'),
+    )
