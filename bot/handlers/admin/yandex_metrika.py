@@ -144,7 +144,7 @@ async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings
             products=[{
                 'id': 'test_subscription',
                 'name': 'Test Subscription',
-                'brand': 'VPN Service',
+                'brand': 'Proxy Service',
                 'category': 'Test',
                 'price': 100.0,
                 'quantity': 1

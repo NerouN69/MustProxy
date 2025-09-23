@@ -218,7 +218,7 @@ class YandexMetrikaService:
             for i, product in enumerate(products, 1):
                 params[f'pr{i}id'] = product.get('id', f'product_{i}')
                 params[f'pr{i}nm'] = product.get('name', 'Subscription')
-                params[f'pr{i}br'] = product.get('brand', 'VPN Service')
+                params[f'pr{i}br'] = product.get('brand', 'Proxy Service')
                 params[f'pr{i}ca'] = product.get('category', 'Subscription')
                 params[f'pr{i}pr'] = str(product.get('price', revenue))
                 params[f'pr{i}qt'] = str(product.get('quantity', 1))
@@ -228,8 +228,8 @@ class YandexMetrikaService:
         else:
             # Дефолтный продукт
             params['pr1id'] = 'subscription'
-            params['pr1nm'] = 'VPN Subscription'
-            params['pr1br'] = 'VPN Service'
+            params['pr1nm'] = 'Proxy Subscription'
+            params['pr1br'] = 'Proxy Service'
             params['pr1ca'] = 'Subscription'
             params['pr1pr'] = str(revenue)
             params['pr1qt'] = '1'
@@ -295,8 +295,8 @@ class YandexMetrikaService:
         # Формируем данные о продукте
         products = [{
             'id': f'subscription_{subscription_months}m',
-            'name': f'VPN Subscription {subscription_months} month{"s" if subscription_months > 1 else ""}',
-            'brand': 'VPN Service',
+            'name': f'Proxy Subscription {subscription_months} month{"s" if subscription_months > 1 else ""}',
+            'brand': 'Proxy Service',
             'category': f'{"Trial" if subscription_months == 0 else "Premium"} Subscription',
             'price': payment_amount,
             'quantity': 1,
