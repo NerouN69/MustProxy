@@ -43,6 +43,8 @@ def get_stats_monitoring_keyboard(i18n_instance, lang: str) -> InlineKeyboardMar
     
     builder.button(text=_(key="admin_stats_button"),
                    callback_data="admin_action:stats")
+    builder.button(text=_(key="admin_yandex_metrika_button", default="📊 Яндекс.Метрика"),
+                   callback_data="admin_action:yandex_metrika")
     builder.button(text=_(key="admin_view_payments_button", default="💰 Платежи"),
                    callback_data="admin_action:view_payments")
     builder.button(text=_(key="admin_view_logs_menu_button"),
@@ -50,7 +52,8 @@ def get_stats_monitoring_keyboard(i18n_instance, lang: str) -> InlineKeyboardMar
     
     builder.button(text=_(key="back_to_admin_panel_button"),
                    callback_data="admin_action:main")
-    builder.adjust(2, 1, 1)
+
+    builder.adjust(2, 2, 1)  # Изменяем расположение кнопок
     return builder.as_markup()
 
 
@@ -385,6 +388,34 @@ def get_broadcast_confirmation_keyboard(lang: str,
     builder.adjust(2)
     return builder.as_markup()
 
+
+def get_yandex_metrika_menu_keyboard(i18n_instance, lang: str) -> InlineKeyboardMarkup:
+    """Клавиатура меню Яндекс.Метрики"""
+    _ = lambda key, **kwargs: i18n_instance.gettext(lang, key, **kwargs)
+    builder = InlineKeyboardBuilder()
+    
+    # Основные функции
+    builder.button(text=_(key="admin_yandex_stats_button", default="📊 Статистика"),
+                   callback_data="yandex_action:stats")
+    builder.button(text=_(key="admin_yandex_test_button", default="🧪 Тест отправки"),
+                   callback_data="yandex_action:test")
+    
+    # Управление конверсиями
+    builder.button(text=_(key="admin_yandex_visits_button", default="👥 Топ визитов"),
+                   callback_data="yandex_action:visits")
+    
+    # Очистка и обслуживание
+    builder.button(text=_(key="admin_yandex_cleanup_button", default="🗑 Очистка старых"),
+                   callback_data="yandex_action:cleanup")
+    
+    # Назад
+    builder.button(text=_(key="back_to_stats_monitoring", default="⬅️ Назад к статистике"),
+                   callback_data="admin_section:stats_monitoring")
+    builder.button(text=_(key="back_to_admin_panel_button"),
+                   callback_data="admin_action:main")
+    
+    builder.adjust(2, 2, 1, 1, 1)
+    return builder.as_markup()
 
 def get_back_to_admin_panel_keyboard(lang: str,
                                      i18n_instance) -> InlineKeyboardMarkup:

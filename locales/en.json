@@ -455,5 +455,13 @@
 
   "metrika_pageview_sent": "Pageview registered in Yandex.Metrica",
   "metrika_conversion_sent": "Conversion sent to Yandex.Metrica",
-  "metrika_ecommerce_sent": "Purchase data sent to Yandex.Metrica"
+  "metrika_ecommerce_sent": "Purchase data sent to Yandex.Metrica",
+
+  "admin_yandex_metrika_button": "📊 Yandex.Metrica",
+  "admin_yandex_stats_button": "📊 Statistics",
+  "admin_yandex_test_button": "🧪 Test Send",
+  "admin_yandex_resend_button": "🔄 Resend Conversions",
+  "admin_yandex_visits_button": "👥 Top Visits",
+  "admin_yandex_cleanup_button": "🗑 Cleanup Old",
+  "back_to_stats_monitoring": "⬅️ Back to Statistics"
 }

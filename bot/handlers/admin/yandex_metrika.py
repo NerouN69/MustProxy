@@ -5,28 +5,71 @@ import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 
 from config.settings import Settings
 from bot.middlewares.i18n import JsonI18n
-from bot.keyboards.inline.admin_keyboards import get_back_to_admin_panel_keyboard
+from bot.keyboards.inline.admin_keyboards import get_back_to_admin_panel_keyboard, get_yandex_metrika_menu_keyboard
 from db.dal import yandex_tracking_dal, user_dal, payment_dal
 from bot.services.yandex_metrika_service import YandexMetrikaService
 
 router = Router(name="admin_yandex_metrika_router")
 
 
-@router.message(Command("yandex_stats"))
-async def yandex_stats_command(message: types.Message, settings: Settings, i18n_data: dict, session: AsyncSession):
+@router.callback_query(F.data == "admin_action:yandex_metrika")
+async def yandex_metrika_menu_handler(callback: types.CallbackQuery, settings: Settings, 
+                                      i18n_data: dict, session: AsyncSession):
+    """Отображение меню Яндекс.Метрики"""
+    current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
+    i18n: JsonI18n = i18n_data.get("i18n_instance")
+    
+    if callback.from_user.id not in settings.ADMIN_IDS:
+        await callback.answer("Access denied", show_alert=True)
+        return
+    
+    _ = lambda key, **kwargs: i18n.gettext(current_lang, key, **kwargs)
+    
+    try:
+        # Получаем краткую статистику
+        bot_info = await callback.bot.get_me()
+        bot_username = bot_info.username or "unknown_bot"
+        metrika_service = YandexMetrikaService(settings, bot_username)
+        stats = await metrika_service.get_tracking_statistics(session)
+        
+        menu_text = (
+            f"📊 <b>Яндекс.Метрика</b>\n\n"
+            f"👥 Отслеживается: {stats['total_trackings']}\n"
+            f"💰 Конверсий: {stats['conversions_sent']}\n"
+            f"📈 Визитов (24ч): {stats['visits_last_24h']}\n\n"
+            f"Выберите действие:"
+        )
+        
+        await callback.message.edit_text(
+            menu_text,
+            parse_mode="HTML",
+            reply_markup=get_yandex_metrika_menu_keyboard(i18n, current_lang)
+        )
+        
+    except Exception as e:
+        logging.error(f"Error showing Yandex Metrika menu: {e}")
+        await callback.answer("Ошибка загрузки меню", show_alert=True)
+    
+    await callback.answer()
+
+
+@router.callback_query(F.data == "yandex_action:stats")
+async def yandex_stats_callback(callback: types.CallbackQuery, settings: Settings, 
+                                i18n_data: dict, session: AsyncSession):
     """Расширенная статистика по Yandex отслеживанию"""
     current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
     i18n: JsonI18n = i18n_data.get("i18n_instance")
     
-    if message.from_user.id not in settings.ADMIN_IDS:
+    if callback.from_user.id not in settings.ADMIN_IDS:
         return
     
     try:
         # Получаем username бота
-        bot_info = await message.bot.get_me()
+        bot_info = await callback.bot.get_me()
         bot_username = bot_info.username or "unknown_bot"
         
         metrika_service = YandexMetrikaService(settings, bot_username)
@@ -54,7 +97,7 @@ async def yandex_stats_command(message: types.Message, settings: Settings, i18n_
             f"└ Токен: {'✅ Настроен' if getattr(settings, 'YANDEX_METRIKA_TOKEN', None) else '❌ Не настроен'}"
         )
         
-        await message.answer(
+        await callback.message.answer(
             stats_text, 
             parse_mode="HTML",
             reply_markup=get_back_to_admin_panel_keyboard(current_lang, i18n)
@@ -62,25 +105,25 @@ async def yandex_stats_command(message: types.Message, settings: Settings, i18n_
         
     except Exception as e:
         logging.error(f"Error getting Yandex stats: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка получения статистики: {e}")
+        await callback.message.answer(f"❌ Ошибка получения статистики: {e}")
 
 
-@router.message(Command("test_yandex"))
-async def test_yandex_command(message: types.Message, settings: Settings, session: AsyncSession):
+@router.callback_query(F.data == "yandex_action:test")
+async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings, session: AsyncSession):
     """Тест отправки тестовой конверсии в Yandex.Метрику"""
     
-    if message.from_user.id not in settings.ADMIN_IDS:
+    if callback.from_user.id not in settings.ADMIN_IDS:
         return
     
     try:
         # Получаем username бота
-        bot_info = await message.bot.get_me()
+        bot_info = await callback.bot.get_me()
         bot_username = bot_info.username or "unknown_bot"
         
         metrika_service = YandexMetrikaService(settings, bot_username)
         
         if not metrika_service.configured:
-            await message.answer("❌ Yandex.Метрика не настроена")
+            await callback.message.answer("❌ Yandex.Метрика не настроена")
             return
         
         # Используем тестовый client_id
@@ -96,7 +139,7 @@ async def test_yandex_command(message: types.Message, settings: Settings, sessio
         # Отправляем ecommerce событие
         ecom_result = await metrika_service.send_ecommerce_purchase(
             client_id=test_client_id,
-            transaction_id=f"test_{message.message_id}",
+            transaction_id=f"test_{callback.message.message_id}",
             revenue=100.0,
             products=[{
                 'id': 'test_subscription',
@@ -124,65 +167,18 @@ async def test_yandex_command(message: types.Message, settings: Settings, sessio
             f"{'✅ Все тесты пройдены успешно!' if all([pageview_result, ecom_result, conversion_result]) else '⚠️ Есть ошибки в тестах'}"
         )
         
-        await message.answer(result_text, parse_mode="HTML")
+        await callback.message.answer(result_text, parse_mode="HTML")
         
     except Exception as e:
         logging.error(f"Error testing Yandex: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка теста: {e}")
+        await callback.message.answer(f"❌ Ошибка теста: {e}")
 
 
-@router.message(Command("resend_conversions"))
-async def resend_conversions_command(message: types.Message, settings: Settings, session: AsyncSession):
-    """Повторная отправка неотправленных конверсий с реальными данными"""
-    
-    if message.from_user.id not in settings.ADMIN_IDS:
-        return
-    
-    try:
-        # Получаем username бота
-        bot_info = await message.bot.get_me()
-        bot_username = bot_info.username or "unknown_bot"
-        
-        metrika_service = YandexMetrikaService(settings, bot_username)
-        
-        if not metrika_service.configured:
-            await message.answer("❌ Yandex.Метрика не настроена")
-            return
-        
-        # Отправляем начальное сообщение
-        status_msg = await message.answer("🔄 Начинаю отправку неотправленных конверсий...")
-        
-        # Запускаем процесс
-        results = await metrika_service.resend_missing_conversions(session, limit=50)
-        
-        await session.commit()
-        
-        # Формируем отчет
-        result_text = (
-            f"✅ <b>Отправка конверсий завершена</b>\n\n"
-            f"📊 Обработано пользователей: {results['processed']}\n"
-            f"✅ Успешно отправлено: {results['success']}\n"
-            f"❌ Ошибок: {results['failed']}\n\n"
-        )
-        
-        if results['failed'] > 0:
-            result_text += "⚠️ Некоторые конверсии не удалось отправить. Проверьте логи."
-        else:
-            result_text += "✨ Все конверсии отправлены успешно!"
-        
-        # Обновляем сообщение
-        await status_msg.edit_text(result_text, parse_mode="HTML")
-        
-    except Exception as e:
-        logging.error(f"Error resending conversions: {e}", exc_info=True)
-        await message.answer("❌ Ошибка при отправке конверсий. Проверьте логи.")
-
-
-@router.message(Command("track_visits"))
-async def track_visits_command(message: types.Message, settings: Settings, session: AsyncSession):
+@router.callback_query(F.data == "yandex_action:visits")
+async def yandex_visits_callback(callback: types.CallbackQuery, settings: Settings, session: AsyncSession):
     """Показывает информацию о визитах пользователей"""
     
-    if message.from_user.id not in settings.ADMIN_IDS:
+    if callback.from_user.id not in settings.ADMIN_IDS:
         return
     
     try:
@@ -199,7 +195,7 @@ async def track_visits_command(message: types.Message, settings: Settings, sessi
         top_visitors = result.scalars().all()
         
         if not top_visitors:
-            await message.answer("📊 Нет данных о визитах")
+            await callback.message.answer("📊 Нет данных о визитах")
             return
         
         visits_text = "👥 <b>Топ пользователей по визитам:</b>\n\n"
@@ -223,18 +219,18 @@ async def track_visits_command(message: types.Message, settings: Settings, sessi
                 f"   ⏱ Последний: {time_display}\n\n"
             )
         
-        await message.answer(visits_text, parse_mode="HTML")
+        await callback.message.answer(visits_text, parse_mode="HTML")
         
     except Exception as e:
         logging.error(f"Error getting visit tracking: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка: {e}")
+        await callback.message.answer(f"❌ Ошибка: {e}")
 
 
-@router.message(Command("cleanup_yandex"))
-async def cleanup_yandex_command(message: types.Message, settings: Settings, session: AsyncSession):
+@router.callback_query(F.data == "yandex_action:cleanup")
+async def yandex_cleanup_callback(callback: types.CallbackQuery, settings: Settings, session: AsyncSession):
     """Очистка старых записей отслеживания без конверсий"""
     
-    if message.from_user.id not in settings.ADMIN_IDS:
+    if callback.from_user.id not in settings.ADMIN_IDS:
         return
     
     try:
@@ -242,11 +238,11 @@ async def cleanup_yandex_command(message: types.Message, settings: Settings, ses
         deleted_count = await yandex_tracking_dal.cleanup_old_tracking(session, days=30)
         await session.commit()
         
-        await message.answer(
+        await callback.message.answer(
             f"🗑 Очистка завершена\n"
             f"Удалено старых записей: {deleted_count}"
         )
         
     except Exception as e:
         logging.error(f"Error cleaning up Yandex tracking: {e}", exc_info=True)
-        await message.answer(f"❌ Ошибка очистки: {e}")
+        await callback.message.answer(f"❌ Ошибка очистки: {e}")

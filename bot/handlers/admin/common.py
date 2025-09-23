@@ -102,7 +102,6 @@ async def admin_panel_actions_callback_handler(
         await admin_user_management_handlers.user_management_menu_handler(
             callback, state, i18n_data, settings, session)
     elif action == "view_banned":
-
         await admin_user_mgmnt_handlers.view_banned_users_handler(
             callback, state, i18n_data, settings, session)
     elif action == "view_logs_menu":
@@ -130,6 +129,11 @@ async def admin_panel_actions_callback_handler(
     elif action == "ads":
         from . import ads as admin_ads_handlers
         await admin_ads_handlers.show_ads_menu(callback, settings, i18n_data, session)
+    elif action == "yandex_metrika":
+        # Импортируем обработчик Яндекс.Метрики
+        from . import yandex_metrika as admin_yandex_handlers
+        await admin_yandex_handlers.yandex_metrika_menu_handler(
+            callback, settings, i18n_data, session)
     elif action == "ads_create":
         from . import ads as admin_ads_handlers
         await admin_ads_handlers.ads_create_start(callback, state, settings, i18n_data)
