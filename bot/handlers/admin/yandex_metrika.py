@@ -41,7 +41,7 @@ async def yandex_metrika_menu_handler(callback: types.CallbackQuery, settings: S
             f"📊 <b>Яндекс.Метрика</b>\n\n"
             f"👥 Отслеживается: {stats['total_trackings']}\n"
             f"💰 Конверсий: {stats['conversions_sent']}\n"
-            f"📈 Визитов (24ч): {stats['last_visit_time']}\n\n"
+            f"📈 Визитов (24ч): {stats['visits_last_24h']}\n\n"  # Исправлено: visits_last_24h вместо last_visit_time
             f"Выберите действие:"
         )
         
@@ -103,10 +103,12 @@ async def yandex_stats_callback(callback: types.CallbackQuery, settings: Setting
             parse_mode="HTML",
             reply_markup=get_back_to_admin_panel_keyboard(current_lang, i18n)
         )
+        await callback.answer()
         
     except Exception as e:
         logging.error(f"Error getting Yandex stats: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка получения статистики: {e}")
+        await callback.answer()
 
 
 @router.callback_query(F.data == "yandex_action:test")
@@ -125,10 +127,10 @@ async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings
         
         if not metrika_service.configured:
             await callback.message.answer("❌ Yandex.Метрика не настроена")
+            await callback.answer()
             return
         
         # Используем тестовый client_id
-        import secrets
         test_client_id = ''.join(str(secrets.randbelow(10)) for _ in range(19))
         test_user_id = callback.from_user.id
         
@@ -159,10 +161,12 @@ async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings
         )
         
         await callback.message.answer(result_text, parse_mode="HTML")
+        await callback.answer()
         
     except Exception as e:
         logging.error(f"Error testing Yandex: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка теста: {e}")
+        await callback.answer()
 
 
 @router.callback_query(F.data == "yandex_action:visits")
@@ -187,6 +191,7 @@ async def yandex_visits_callback(callback: types.CallbackQuery, settings: Settin
         
         if not top_visitors:
             await callback.message.answer("📊 Нет данных о визитах")
+            await callback.answer()
             return
         
         visits_text = "👥 <b>Топ пользователей по визитам:</b>\n\n"
@@ -211,10 +216,12 @@ async def yandex_visits_callback(callback: types.CallbackQuery, settings: Settin
             )
         
         await callback.message.answer(visits_text, parse_mode="HTML")
+        await callback.answer()
         
     except Exception as e:
         logging.error(f"Error getting visit tracking: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка: {e}")
+        await callback.answer()
 
 
 @router.callback_query(F.data == "yandex_action:cleanup")
@@ -233,7 +240,9 @@ async def yandex_cleanup_callback(callback: types.CallbackQuery, settings: Setti
             f"🗑 Очистка завершена\n"
             f"Удалено старых записей: {deleted_count}"
         )
+        await callback.answer()
         
     except Exception as e:
         logging.error(f"Error cleaning up Yandex tracking: {e}", exc_info=True)
         await callback.message.answer(f"❌ Ошибка очистки: {e}")
+        await callback.answer()
