@@ -60,11 +60,28 @@ def _run_yandex_tracking_migrations(connection: Connection) -> None:
         if 'yandex_tracking' not in inspector.get_table_names():
             logging.info("Table yandex_tracking doesn't exist yet, skipping migrations")
             return
+        
+        # Проверяем наличие колонок и добавляем недостающие
+        existing_columns = {col['name'] for col in inspector.get_columns('yandex_tracking')}
+        
+        # Добавляем last_visit_time если её нет
+        if 'last_visit_time' not in existing_columns:
+            connection.execute(text(
+                "ALTER TABLE yandex_tracking ADD COLUMN last_visit_time TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
+            ))
+            logging.info("Added last_visit_time column to yandex_tracking")
+        
+        # Добавляем visit_count если её нет
+        if 'visit_count' not in existing_columns:
+            connection.execute(text(
+                "ALTER TABLE yandex_tracking ADD COLUMN visit_count INTEGER DEFAULT 1"
+            ))
+            logging.info("Added visit_count column to yandex_tracking")
             
         # Обновляем существующие записи, где last_visit_time = NULL
         connection.execute(text("""
             UPDATE yandex_tracking 
-            SET last_visit_time = first_visit_time 
+            SET last_visit_time = COALESCE(first_visit_time, NOW())
             WHERE last_visit_time IS NULL
         """))
         
@@ -89,22 +106,29 @@ def _run_yandex_tracking_migrations(connection: Connection) -> None:
             ))
             logging.info("Created index idx_yandex_tracking_last_visit")
             
-        # Проверяем таблицу yandex_conversions
-        if 'yandex_conversions' in inspector.get_table_names():
-            existing_conv_indexes = {idx['name'] for idx in inspector.get_indexes('yandex_conversions')}
+        # Проверяем и создаем таблицу yandex_conversions если её нет
+        if 'yandex_conversions' not in inspector.get_table_names():
+            connection.execute(text("""
+                CREATE TABLE IF NOT EXISTS yandex_conversions (
+                    conversion_id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(user_id),
+                    payment_id VARCHAR NOT NULL,
+                    amount FLOAT NOT NULL,
+                    sent_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    CONSTRAINT uq_user_payment_conversion UNIQUE (user_id, payment_id)
+                )
+            """))
+            logging.info("Created yandex_conversions table")
             
-            if 'idx_yandex_conversions_user_id' not in existing_conv_indexes:
-                connection.execute(text(
-                    "CREATE INDEX idx_yandex_conversions_user_id ON yandex_conversions(user_id)"
-                ))
-                logging.info("Created index idx_yandex_conversions_user_id")
-                
-            if 'idx_yandex_conversions_payment_id' not in existing_conv_indexes:
-                connection.execute(text(
-                    "CREATE INDEX idx_yandex_conversions_payment_id ON yandex_conversions(payment_id)"
-                ))
-                logging.info("Created index idx_yandex_conversions_payment_id")
-                
+            # Создаем индексы для yandex_conversions
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_yandex_conversions_user_id ON yandex_conversions(user_id)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_yandex_conversions_payment_id ON yandex_conversions(payment_id)"
+            ))
+            logging.info("Created indexes for yandex_conversions")
+        
         logging.info("Yandex tracking migrations completed successfully")
         
     except Exception as e:

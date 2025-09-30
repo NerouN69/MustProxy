@@ -271,11 +271,8 @@ class YandexTracking(Base):
     
     # Информация о визитах
     first_visit_time = Column(DateTime(timezone=True), server_default=func.now())
-    last_visit_time = Column(DateTime(timezone=True), nullable=True)
+    last_visit_time = Column(DateTime(timezone=True), server_default=func.now())  # Добавлено значение по умолчанию
     visit_count = Column(Integer, default=1)
-    
-    # Устаревшее поле, оставляем для совместимости
-    conversion_sent = Column(Boolean, default=False, index=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +41,7 @@ async def yandex_metrika_menu_handler(callback: types.CallbackQuery, settings: S
             f"📊 <b>Яндекс.Метрика</b>\n\n"
             f"👥 Отслеживается: {stats['total_trackings']}\n"
             f"💰 Конверсий: {stats['conversions_sent']}\n"
-            f"📈 Визитов (24ч): {stats['visits_last_24h']}\n\n"
+            f"📈 Визитов (24ч): {stats['last_visit_time']}\n\n"
             f"Выберите действие:"
         )
         
@@ -110,7 +111,7 @@ async def yandex_stats_callback(callback: types.CallbackQuery, settings: Setting
 
 @router.callback_query(F.data == "yandex_action:test")
 async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings, session: AsyncSession):
-    """Тест отправки тестовой конверсии в Yandex.Метрику"""
+    """Тест отправки тестовых событий в Yandex.Метрику"""
     
     if callback.from_user.id not in settings.ADMIN_IDS:
         return
@@ -127,44 +128,34 @@ async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings
             return
         
         # Используем тестовый client_id
+        import secrets
         test_client_id = ''.join(str(secrets.randbelow(10)) for _ in range(19))
+        test_user_id = callback.from_user.id
         
-        # Отправляем pageview
-        pageview_result = await metrika_service.send_pageview(
-            client_id=test_client_id,
-            page_url=f"https://t.me/{bot_username}",
-            page_title="Test Visit"
+        # Отправляем событие install
+        install_result = await metrika_service.send_install_event(
+            session=session,
+            user_id=test_user_id,
+            client_id=test_client_id
         )
         
-        # Отправляем ecommerce событие
-        ecom_result = await metrika_service.send_ecommerce_purchase(
-            client_id=test_client_id,
-            transaction_id=f"test_{callback.message.message_id}",
-            revenue=100.0,
-            products=[{
-                'id': 'test_subscription',
-                'name': 'Test Subscription',
-                'brand': 'Proxy Service',
-                'category': 'Test',
-                'price': 100.0,
-                'quantity': 1
-            }]
-        )
+        # Небольшая задержка между событиями
+        await asyncio.sleep(1)
         
-        # Отправляем конверсию
-        conversion_result = await metrika_service.send_conversion(
-            client_id=test_client_id,
-            goal_name="test_purchase",
-            goal_value=100.0
+        # Отправляем событие purchase
+        purchase_result = await metrika_service.send_purchase_event(
+            session=session,
+            user_id=test_user_id,
+            payment_amount=100.0,
+            payment_id=f"test_{callback.message.message_id}"
         )
         
         result_text = (
             f"🧪 <b>Тест Yandex.Метрика</b>\n\n"
             f"Client ID: <code>{test_client_id}</code>\n\n"
-            f"📄 Pageview: {'✅ Успешно' if pageview_result else '❌ Ошибка'}\n"
-            f"🛒 Ecommerce: {'✅ Успешно' if ecom_result else '❌ Ошибка'}\n"
-            f"🎯 Conversion: {'✅ Успешно' if conversion_result else '❌ Ошибка'}\n\n"
-            f"{'✅ Все тесты пройдены успешно!' if all([pageview_result, ecom_result, conversion_result]) else '⚠️ Есть ошибки в тестах'}"
+            f"📱 Install event: {'✅ Успешно' if install_result else '❌ Ошибка'}\n"
+            f"💰 Purchase event: {'✅ Успешно' if purchase_result else '❌ Ошибка'}\n\n"
+            f"{'✅ Все тесты пройдены успешно!' if all([install_result, purchase_result]) else '⚠️ Есть ошибки в тестах'}"
         )
         
         await callback.message.answer(result_text, parse_mode="HTML")

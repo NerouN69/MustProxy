@@ -263,7 +263,6 @@ async def start_command_handler(message: types.Message,
     # Обработка Yandex Client ID
     if yandex_client_id:
         try:
-            from db.dal import yandex_tracking_dal
             from bot.services.yandex_metrika_service import YandexMetrikaService
             
             bot_info = await message.bot.get_me()
@@ -273,25 +272,16 @@ async def start_command_handler(message: types.Message,
             if not metrika_service._validate_client_id(yandex_client_id):
                 logging.warning(f"Invalid Yandex client_id format received: {yandex_client_id} from user {user_id}")
             else:
-                tracking = await yandex_tracking_dal.create_yandex_tracking(
-                    session, user_id, yandex_client_id, settings.YANDEX_METRIKA_COUNTER_ID
+                # Отправляем событие install при первом запуске
+                install_success = await metrika_service.send_install_event(
+                    session, user_id, yandex_client_id
                 )
-                if tracking:
+                
+                if install_success:
                     await session.commit()
-                    logging.info(f"Yandex tracking created/updated for user {user_id} with client_id {yandex_client_id}")
-                    
-                    if metrika_service.configured:
-                        pageview_success = await metrika_service.send_pageview(
-                            client_id=yandex_client_id,
-                            page_url=f"https://t.me/{bot_username}",
-                            page_title="Telegram Bot Visit",
-                            referrer="https://yandex.ru"
-                        )
-                        if pageview_success:
-                            logging.info(f"Sent pageview to Yandex Metrika for user {user_id}")
-                        else:
-                            logging.error(f"Failed to send pageview for user {user_id}")
+                    logging.info(f"Sent install event for user {user_id} with client_id {yandex_client_id}")
                 else:
+                    logging.error(f"Failed to send install event for user {user_id}")
                     await session.rollback()
         except Exception as e:
             logging.error(f"Failed to process Yandex client_id: {e}", exc_info=True)

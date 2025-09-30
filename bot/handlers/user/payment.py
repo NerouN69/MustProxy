@@ -120,7 +120,6 @@ async def process_successful_payment(session: AsyncSession, bot: Bot,
         try:
             from bot.services.yandex_metrika_service import YandexMetrikaService
             
-            # Получаем username бота из диспетчера или создаем новый запрос
             bot_username = "unknown_bot"
             try:
                 bot_info = await bot.get_me()
@@ -131,20 +130,23 @@ async def process_successful_payment(session: AsyncSession, bot: Bot,
             metrika_service = YandexMetrikaService(settings, bot_username)
             
             if metrika_service.configured:
-                await metrika_service.send_full_conversion_chain(
+                purchase_success = await metrika_service.send_purchase_event(
                     session=session,
                     user_id=user_id,
                     payment_amount=payment_value,
-                    payment_id=str(payment_db_id),
-                    subscription_months=subscription_months
+                    payment_id=str(payment_db_id)
                 )
-                logging.info(f"Sent Yandex Metrika conversion for user {user_id}, payment {payment_db_id}")
+                
+                if purchase_success:
+                    logging.info(f"Sent purchase event to Yandex Metrika for user {user_id}, payment {payment_db_id}")
+                else:
+                    logging.warning(f"Failed to send purchase event for user {user_id}, payment {payment_db_id}")
             else:
-                logging.debug("Yandex Metrika not configured, skipping conversion tracking")
+                logging.debug("Yandex Metrika not configured, skipping purchase event")
                 
         except Exception as e_metrika:
             # Не останавливаем обработку платежа из-за ошибки в метрике
-            logging.error(f"Failed to send Yandex Metrika conversion for user {user_id}: {e_metrika}", exc_info=True)
+            logging.error(f"Failed to send Yandex Metrika purchase event for user {user_id}: {e_metrika}", exc_info=True)
 
 
     except (TypeError, ValueError) as e:
