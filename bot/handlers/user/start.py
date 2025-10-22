@@ -8,24 +8,33 @@ from aiogram.types import FSInputFile
 from typing import Optional, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timezone
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 
 from db.dal import user_dal
+from db.models import User
 
-from bot.keyboards.inline.user_keyboards import get_main_menu_inline_keyboard, get_language_selection_keyboard
+from bot.keyboards.inline.user_keyboards import (
+    get_main_menu_inline_keyboard,
+    get_language_selection_keyboard,
+    get_channel_subscription_keyboard,
+)
 from bot.services.subscription_service import SubscriptionService
 from bot.services.panel_api_service import PanelApiService
 from bot.services.referral_service import ReferralService
 from bot.services.promo_code_service import PromoCodeService
 from config.settings import Settings
 from bot.middlewares.i18n import JsonI18n
+from bot.utils.text_sanitizer import sanitize_username, sanitize_display_name
 
 router = Router(name="user_start_router")
 
 
-async def send_main_menu(target_event: Union[types.Message, types.CallbackQuery],
+async def send_main_menu(target_event: Union[types.Message,
+                                             types.CallbackQuery],
                          settings: Settings,
                          i18n_data: dict,
                          subscription_service: SubscriptionService,
+                         panel_service: PanelApiService,
                          session: AsyncSession,
                          is_edit: bool = False):
     current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
@@ -50,13 +59,16 @@ async def send_main_menu(target_event: Union[types.Message, types.CallbackQuery]
                 pass
         return
 
+
     _ = lambda key, **kwargs: i18n.gettext(current_lang, key, **kwargs)
 
     show_trial_button_in_menu = False
     if settings.TRIAL_ENABLED:
-        if hasattr(subscription_service, 'has_had_any_subscription') and callable(
-                getattr(subscription_service, 'has_had_any_subscription')):
-            if not await subscription_service.has_had_any_subscription(session, user_id):
+        if hasattr(
+                subscription_service, 'has_had_any_subscription') and callable(
+                    getattr(subscription_service, 'has_had_any_subscription')):
+            if not await subscription_service.has_had_any_subscription(
+                    session, user_id):
                 show_trial_button_in_menu = True
         else:
             logging.error(
@@ -75,7 +87,31 @@ async def send_main_menu(target_event: Union[types.Message, types.CallbackQuery]
 
     if is_active:
         end_date = active["end_date"].strftime("%d.%m.%Y %H:%M")
-        text = _(key="main_menu_subscription_active", user_name=user_full_name, end_date=end_date)
+        
+        # Получаем устройства пользователя
+        devices = await panel_service.get_user_devices(active.get("user_id")) if active else None
+        
+        # Считаем текущее количество устройств
+        current_devices = len(devices.get('devices') or []) if devices else 0
+        
+        # Обработка max_devices
+        max_devices_value = active.get("max_devices")
+        max_devices_display = _("devices_unlimited_label")
+        if max_devices_value not in (None, 0):
+            try:
+                max_devices_int = int(max_devices_value)
+                if max_devices_int >= 0:
+                    max_devices_display = str(max_devices_int)
+            except (TypeError, ValueError):
+                max_devices_display = str(max_devices_value)
+        
+        text = _(
+            key="main_menu_subscription_active", 
+            user_name=user_full_name, 
+            end_date=end_date, 
+            current_devices=current_devices,
+            max_devices=max_devices_display
+        )
     else:
         text = _(key="main_menu_subscription_inactive", user_name=user_full_name)
 
@@ -145,9 +181,188 @@ async def send_main_menu(target_event: Union[types.Message, types.CallbackQuery]
             
         if isinstance(target_event, types.CallbackQuery):
             try:
-                await target_event.answer(_("error_occurred_try_again"), show_alert=True)
+                await target_event.answer(
+                    _("error_occurred_try_again") if is_edit else None)
             except Exception:
                 pass
+
+
+async def ensure_required_channel_subscription(
+        event: Union[types.Message, types.CallbackQuery],
+        settings: Settings,
+        i18n: Optional[JsonI18n],
+        current_lang: str,
+        session: AsyncSession,
+        db_user: Optional[User] = None) -> bool:
+    """
+    Verify that the user is a member of the required channel (if configured).
+    Returns True when access can proceed, False when user must subscribe first.
+    """
+    required_channel_id = settings.REQUIRED_CHANNEL_ID
+    if not required_channel_id:
+        return True
+
+    if isinstance(event, types.CallbackQuery):
+        user_id = event.from_user.id
+        bot_instance: Optional[Bot] = getattr(event, "bot", None)
+        if bot_instance is None and event.message:
+            bot_instance = event.message.bot
+        message_obj: Optional[types.Message] = event.message
+    else:
+        user_id = event.from_user.id
+        bot_instance = event.bot if hasattr(event, "bot") else None
+        message_obj = event
+
+    if bot_instance is None:
+        logging.error(
+            "Channel subscription check: bot instance missing for user %s.", user_id
+        )
+        return False
+
+    if user_id in settings.ADMIN_IDS:
+        return True
+
+    if db_user is None:
+        try:
+            db_user = await user_dal.get_user_by_id(session, user_id)
+        except Exception as fetch_error:
+            logging.error(
+                "Channel subscription check: failed to fetch user %s: %s",
+                user_id,
+                fetch_error,
+                exc_info=True,
+            )
+            return False
+
+    if not db_user:
+        logging.warning(
+            "Required channel check skipped because user %s is not persisted yet.",
+            user_id,
+        )
+        return True
+
+    if (db_user.channel_subscription_verified
+            and db_user.channel_subscription_verified_for
+            == required_channel_id):
+        return True
+
+    def translate(key: str, **kwargs) -> str:
+        if i18n:
+            return i18n.gettext(current_lang, key, **kwargs)
+        return key
+
+    now = datetime.now(timezone.utc)
+    is_member = False
+    status_value = None
+
+    try:
+        member = await bot_instance.get_chat_member(required_channel_id, user_id)
+        status = getattr(member, "status", None)
+        status_value = getattr(status, "value", status)
+        allowed_statuses = {"creator", "administrator", "member", "restricted"}
+        if status_value in allowed_statuses:
+            is_member = True
+    except TelegramBadRequest as bad_request:
+        logging.info(
+            "Required channel check: user %s not subscribed (details: %s)",
+            user_id,
+            bad_request,
+        )
+    except TelegramForbiddenError as forbidden_error:
+        logging.error(
+            "Required channel check failed due to insufficient permissions: %s",
+            forbidden_error,
+        )
+        error_text = translate("channel_subscription_check_failed")
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer(error_text, show_alert=True)
+            except Exception:
+                pass
+            if message_obj:
+                try:
+                    await message_obj.answer(error_text)
+                except Exception:
+                    pass
+        else:
+            await event.answer(error_text)
+        return False
+    except TelegramAPIError as api_error:
+        logging.error(
+            "Required channel check failed for user %s: %s",
+            user_id,
+            api_error,
+            exc_info=True,
+        )
+        error_text = translate("channel_subscription_check_failed")
+        if isinstance(event, types.CallbackQuery):
+            try:
+                await event.answer(error_text, show_alert=True)
+            except Exception:
+                pass
+            if message_obj:
+                try:
+                    await message_obj.answer(error_text)
+                except Exception:
+                    pass
+        else:
+            await event.answer(error_text)
+        return False
+
+    update_payload = {
+        "channel_subscription_checked_at": now,
+        "channel_subscription_verified_for": required_channel_id,
+        "channel_subscription_verified": is_member,
+    }
+    try:
+        await user_dal.update_user(session, user_id, update_payload)
+    except Exception as update_error:
+        logging.error(
+            "Failed to persist channel verification result for user %s: %s",
+            user_id,
+            update_error,
+            exc_info=True,
+        )
+
+    if is_member:
+        logging.info(
+            "User %s confirmed as member of required channel %s (status=%s).",
+            user_id,
+            required_channel_id,
+            status_value,
+        )
+        return True
+
+    keyboard = (get_channel_subscription_keyboard(
+        current_lang, i18n, settings.REQUIRED_CHANNEL_LINK
+    )
+               if i18n else None)
+
+    prompt_text = translate("channel_subscription_required")
+
+    if isinstance(event, types.CallbackQuery):
+        if keyboard and event.message:
+            try:
+                await event.message.edit_text(prompt_text, reply_markup=keyboard)
+            except Exception as edit_error:
+                logging.debug(
+                    "Failed to edit prompt message for user %s: %s",
+                    user_id,
+                    edit_error,
+                )
+        if keyboard is None and message_obj:
+            try:
+                await message_obj.answer(prompt_text)
+            except Exception:
+                pass
+        try:
+            await event.answer(prompt_text, show_alert=True)
+        except Exception:
+            pass
+    else:
+        await event.answer(prompt_text, reply_markup=keyboard)
+
+    return False
 
 
 @router.message(CommandStart())
@@ -160,6 +375,7 @@ async def start_command_handler(message: types.Message,
                                 settings: Settings,
                                 i18n_data: dict,
                                 subscription_service: SubscriptionService,
+                                panel_service: PanelApiService,
                                 session: AsyncSession,
                                 ref_match: Optional[re.Match] = None,
                                 promo_match: Optional[re.Match] = None,
@@ -193,13 +409,17 @@ async def start_command_handler(message: types.Message,
         ad_start_param = ad_param_match.group(1)
         logging.info(f"User {user_id} started with ad start param: {ad_start_param}")
 
+    sanitized_username = sanitize_username(user.username)
+    sanitized_first_name = sanitize_display_name(user.first_name)
+    sanitized_last_name = sanitize_display_name(user.last_name)
+
     db_user = await user_dal.get_user_by_id(session, user_id)
     if not db_user:
         user_data_to_create = {
             "user_id": user_id,
-            "username": user.username,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
+            "username": sanitized_username,
+            "first_name": sanitized_first_name,
+            "last_name": sanitized_last_name,
             "language_code": current_lang,
             "referred_by_id": referred_by_user_id,
             "registration_date": datetime.now(timezone.utc)
@@ -218,13 +438,14 @@ async def start_command_handler(message: types.Message,
                     notification_service = NotificationService(message.bot, settings, i18n)
                     await notification_service.notify_new_user_registration(
                         user_id=user_id,
-                        username=user.username,
-                        first_name=user.first_name,
+                        username=sanitized_username,
+                        first_name=sanitized_first_name,
                         referred_by_id=referred_by_user_id
                     )
                 except Exception as e:
                     logging.error(f"Failed to send new user notification: {e}")
         except Exception as e_create:
+
             logging.error(
                 f"Failed to add new user {user_id} to session: {e_create}",
                 exc_info=True)
@@ -235,6 +456,7 @@ async def start_command_handler(message: types.Message,
         if db_user.language_code != current_lang:
             update_payload["language_code"] = current_lang
         # Set referral only if not already set AND user is not currently active.
+        # This allows previously subscribed but currently inactive users to be attributed.
         if referred_by_user_id and db_user.referred_by_id is None:
             try:
                 is_active_now = await subscription_service.has_active_subscription(session, user_id)
@@ -242,20 +464,22 @@ async def start_command_handler(message: types.Message,
                 is_active_now = False
             if not is_active_now:
                 update_payload["referred_by_id"] = referred_by_user_id
-        if user.username != db_user.username:
-            update_payload["username"] = user.username
-        if user.first_name != db_user.first_name:
-            update_payload["first_name"] = user.first_name
-        if user.last_name != db_user.last_name:
-            update_payload["last_name"] = user.last_name
+        if sanitized_username != db_user.username:
+            update_payload["username"] = sanitized_username
+        if sanitized_first_name != db_user.first_name:
+            update_payload["first_name"] = sanitized_first_name
+        if sanitized_last_name != db_user.last_name:
+            update_payload["last_name"] = sanitized_last_name
 
         if update_payload:
             try:
                 await user_dal.update_user(session, user_id, update_payload)
+
                 logging.info(
                     f"Updated existing user {user_id} in session: {update_payload}"
                 )
             except Exception as e_update:
+
                 logging.error(
                     f"Failed to update existing user {user_id} in session: {e_update}",
                     exc_info=True)
@@ -302,67 +526,120 @@ async def start_command_handler(message: types.Message,
             except Exception:
                 pass
 
+    if not await ensure_required_channel_subscription(message, settings, i18n,
+                                                      current_lang, session,
+                                                      db_user):
+        return
+
     # Send welcome message if not disabled
     if not settings.DISABLE_WELCOME_MESSAGE:
-        welcome_text = _(key="welcome", user_name=hd.quote(user.full_name))
-        
-        # Если пришел с Яндекс.Директа, добавляем специальное сообщение
-        if yandex_client_id:
-            welcome_text += f"\n\n{_('yandex_tracking_enabled')}"
-        
-        await message.answer(welcome_text)
-    
+        await message.answer(_(key="welcome", user_name=hd.quote(user.full_name)))
+
     # Auto-apply promo code if provided via start parameter
     if promo_code_to_apply:
         try:
             from bot.services.promo_code_service import PromoCodeService
             promo_code_service = PromoCodeService(settings, subscription_service, message.bot, i18n)
-            
+
             success, result = await promo_code_service.apply_promo_code(
                 session, user_id, promo_code_to_apply, current_lang
             )
-            
+
             if success:
                 await session.commit()
                 logging.info(f"Auto-applied promo code '{promo_code_to_apply}' for user {user_id}")
-                
+
                 # Get updated subscription details
                 active = await subscription_service.get_active_subscription_details(session, user_id)
                 config_link = active.get("config_link") if active else None
                 config_link = config_link or _("config_link_not_available")
-                
+
                 new_end_date = result if isinstance(result, datetime) else None
-                
+
                 promo_success_text = _(
                     "promo_code_applied_success_full",
                     end_date=(new_end_date.strftime("%d.%m.%Y %H:%M:%S") if new_end_date else "N/A"),
                     config_link=config_link,
                 )
-                
+
                 from bot.keyboards.inline.user_keyboards import get_connect_and_main_keyboard
                 await message.answer(
                     promo_success_text,
                     reply_markup=get_connect_and_main_keyboard(current_lang, i18n, settings, config_link),
                     parse_mode="HTML"
                 )
-                
+
                 # Don't show main menu if promo was successfully applied
                 return
             else:
                 await session.rollback()
                 logging.warning(f"Failed to auto-apply promo code '{promo_code_to_apply}' for user {user_id}: {result}")
                 # Continue to show main menu if promo failed
-                
+
         except Exception as e:
             logging.error(f"Error auto-applying promo code '{promo_code_to_apply}' for user {user_id}: {e}")
             await session.rollback()
-    
+
     await send_main_menu(message,
                          settings,
                          i18n_data,
                          subscription_service,
+                         panel_service,
                          session,
                          is_edit=False)
+
+
+@router.callback_query(F.data == "channel_subscription:verify")
+async def verify_channel_subscription_callback(
+        callback: types.CallbackQuery,
+        settings: Settings,
+        i18n_data: dict,
+        subscription_service: SubscriptionService,
+        panel_service: PanelApiService,
+        session: AsyncSession):
+    current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
+    i18n: Optional[JsonI18n] = i18n_data.get("i18n_instance")
+
+    db_user = await user_dal.get_user_by_id(session, callback.from_user.id)
+
+    verified = await ensure_required_channel_subscription(
+        callback, settings, i18n, current_lang, session, db_user)
+    if not verified:
+        return
+
+    if db_user and db_user.language_code:
+        current_lang = db_user.language_code
+        i18n_data["current_language"] = current_lang
+
+    if i18n:
+        _ = lambda key, **kwargs: i18n.gettext(current_lang, key, **kwargs)
+    else:
+        _ = lambda key, **kwargs: key
+
+    if not settings.DISABLE_WELCOME_MESSAGE:
+        welcome_text = _(key="welcome",
+                         user_name=hd.quote(callback.from_user.full_name))
+        if callback.message:
+            await callback.message.answer(welcome_text)
+        else:
+            fallback_bot: Optional[Bot] = getattr(callback, "bot", None)
+            if fallback_bot:
+                await fallback_bot.send_message(callback.from_user.id,
+                                                welcome_text)
+
+    try:
+        await callback.answer(_(key="channel_subscription_verified_success"),
+                              show_alert=True)
+    except Exception:
+        pass
+
+    await send_main_menu(callback,
+                         settings,
+                         i18n_data,
+                         subscription_service,
+                         panel_service,
+                         session,
+                         is_edit=bool(callback.message))
 
 
 @router.message(Command("language"))
@@ -404,7 +681,8 @@ async def language_command_handler(
 @router.callback_query(F.data.startswith("set_lang_"))
 async def select_language_callback_handler(
         callback: types.CallbackQuery, i18n_data: dict, settings: Settings,
-        subscription_service: SubscriptionService, session: AsyncSession):
+        subscription_service: SubscriptionService, panel_service: PanelApiService,
+        session: AsyncSession):
     i18n: Optional[JsonI18n] = i18n_data.get("i18n_instance")
     if not i18n or not callback.message:
         await callback.answer("Service error or message context lost.",
@@ -443,6 +721,7 @@ async def select_language_callback_handler(
                          settings,
                          i18n_data,
                          subscription_service,
+                         panel_service,
                          session,
                          is_edit=True)
 
@@ -469,8 +748,11 @@ async def main_action_callback_handler(
         await user_subscription_handlers.display_subscription_options(
             callback, i18n_data, settings, session)
     elif action == "my_subscription":
-
         await user_subscription_handlers.my_subscription_command_handler(
+            callback, i18n_data, settings, panel_service, subscription_service,
+            session, bot)
+    elif action == "my_devices":
+        await user_subscription_handlers.my_devices_command_handler(
             callback, i18n_data, settings, panel_service, subscription_service,
             session, bot)
     elif action == "referral":
@@ -490,8 +772,17 @@ async def main_action_callback_handler(
                              settings,
                              i18n_data,
                              subscription_service,
+                             panel_service,
                              session,
                              is_edit=True)
+    elif action == "back_to_main_keep":
+        await send_main_menu(callback,
+                             settings,
+                             i18n_data,
+                             subscription_service,
+                             panel_service,
+                             session,
+                             is_edit=False)
     else:
         i18n: Optional[JsonI18n] = i18n_data.get("i18n_instance")
         _ = lambda key, **kwargs: i18n.gettext(

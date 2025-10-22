@@ -16,6 +16,7 @@ from bot.services.referral_service import ReferralService
 from .notification_service import NotificationService
 from bot.keyboards.inline.user_keyboards import get_connect_and_main_keyboard
 from db.dal import payment_dal, user_dal, subscription_dal
+from bot.utils.text_sanitizer import sanitize_display_name, username_for_display
 
 
 def convert_period_to_months(period: Optional[str]) -> int:
@@ -184,10 +185,12 @@ class TributeService:
                         inviter_name_display = _('friend_placeholder')
                         if db_user and db_user.referred_by_id:
                             inviter = await user_dal.get_user_by_id(session, db_user.referred_by_id)
-                            if inviter and inviter.first_name:
-                                inviter_name_display = inviter.first_name
-                            elif inviter and inviter.username:
-                                inviter_name_display = f"@{inviter.username}"
+                            if inviter:
+                                safe_name = sanitize_display_name(inviter.first_name) if inviter.first_name else None
+                                if safe_name:
+                                    inviter_name_display = safe_name
+                                elif inviter.username:
+                                    inviter_name_display = username_for_display(inviter.username, with_at=False)
                         success_msg = _(
                             "payment_successful_with_referral_bonus_full",
                             months=months,
@@ -205,7 +208,11 @@ class TributeService:
                             config_link=config_link,
                         )
                     markup = get_connect_and_main_keyboard(
-                        lang, i18n, settings, config_link
+                        lang,
+                        i18n,
+                        settings,
+                        config_link,
+                        preserve_message=True,
                     )
 
                     try:
@@ -250,8 +257,39 @@ class TributeService:
         from bot.keyboards.inline.user_keyboards import get_subscribe_only_markup
         
         try:
-            # Set all user's subscriptions to expire in 1 day (grace period)
-            await subscription_dal.set_user_subscriptions_cancelled_with_grace(session, user_id, grace_days=1)
+            grace_days = 1
+            grace_end = datetime.now(timezone.utc) + timedelta(days=grace_days)
+
+            active_subscriptions = await subscription_dal.get_active_subscriptions_for_user(session, user_id)
+
+            panel_users_updated: set[str] = set()
+            for sub in active_subscriptions:
+                updated_sub = await subscription_dal.update_subscription(
+                    session,
+                    sub.subscription_id,
+                    {
+                        "end_date": grace_end,
+                        "status_from_panel": "CANCELLED",
+                        "skip_notifications": True,
+                    },
+                )
+
+                panel_uuid = updated_sub.panel_user_uuid if updated_sub else None
+                if panel_uuid and panel_uuid not in panel_users_updated:
+                    panel_users_updated.add(panel_uuid)
+                    panel_payload = {
+                        "expireAt": grace_end.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                    }
+                    try:
+                        await self.panel_service.update_user_details_on_panel(
+                            panel_uuid,
+                            panel_payload,
+                            log_response=False,
+                        )
+                    except Exception as panel_err:
+                        logging.error(
+                            f"Failed to update panel expiry for user {user_id} (panel_uuid {panel_uuid}) during Tribute cancellation: {panel_err}")
+
             await session.commit()
             
             # Send notification about cancellation if enabled

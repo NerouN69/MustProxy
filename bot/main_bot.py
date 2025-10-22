@@ -201,6 +201,7 @@ async def on_shutdown_configured(dispatcher: Dispatcher):
     for service_key in (
         "panel_service",
         "cryptopay_service",
+        "freekassa_service",
         "tribute_service",
         "panel_webhook_service",
         "yookassa_service",

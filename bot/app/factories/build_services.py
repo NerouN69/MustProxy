@@ -13,7 +13,7 @@ from bot.services.tribute_service import TributeService
 from bot.services.crypto_pay_service import CryptoPayService
 from bot.services.panel_webhook_service import PanelWebhookService
 from bot.services.yandex_metrika_service import YandexMetrikaService
-
+from bot.services.freekassa_service import FreeKassaService
 
 def build_core_services(
     settings: Settings,
@@ -36,6 +36,14 @@ def build_core_services(
         async_session_factory,
         subscription_service,
         referral_service,
+    )
+    freekassa_service = FreeKassaService(
+        bot=bot,
+        settings=settings,
+        i18n=i18n,
+        async_session_factory=async_session_factory,
+        subscription_service=subscription_service,
+        referral_service=referral_service,
     )
     tribute_service = TributeService(
         bot,
@@ -72,10 +80,9 @@ def build_core_services(
         "promo_code_service": promo_code_service,
         "stars_service": stars_service,
         "cryptopay_service": cryptopay_service,
+        "freekassa_service": freekassa_service,
         "tribute_service": tribute_service,
         "panel_webhook_service": panel_webhook_service,
         "yookassa_service": yookassa_service,
         "yandex_metrika_service": yandex_metrika_service,
     }
-
-

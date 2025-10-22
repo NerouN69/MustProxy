@@ -455,4 +455,3 @@ async def payment_methods_list(callback: types.CallbackQuery, settings: Settings
     except Exception:
         pass
 
-

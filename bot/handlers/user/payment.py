@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 
 from aiohttp import web
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -22,12 +23,45 @@ from bot.middlewares.i18n import JsonI18n
 from config.settings import Settings
 from bot.services.notification_service import NotificationService
 from bot.keyboards.inline.user_keyboards import get_connect_and_main_keyboard
+from bot.utils.text_sanitizer import sanitize_display_name, username_for_display
 
 payment_processing_lock = asyncio.Lock()
 
 YOOKASSA_EVENT_PAYMENT_SUCCEEDED = 'payment.succeeded'
 YOOKASSA_EVENT_PAYMENT_CANCELED = 'payment.canceled'
 YOOKASSA_EVENT_PAYMENT_WAITING_FOR_CAPTURE = 'payment.waiting_for_capture'
+
+
+async def delete_previous_bot_messages(bot: Bot, user_id: int, limit: int = 5):
+
+    try:
+        # Получаем информацию о боте
+        bot_info = await bot.get_me()
+        bot_id = bot_info.id
+        pass
+        
+    except Exception as e:
+        logging.debug(f"Не удалось обработать предыдущие сообщения для пользователя {user_id}: {e}")
+
+
+async def send_message_with_cleanup(bot: Bot, user_id: int, text: str, 
+                                    reply_markup=None, parse_mode: str = "HTML",
+                                    disable_web_page_preview: bool = True):
+    try:
+        # Отправляем новое сообщение
+        sent_message = await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview
+        )
+        
+        return sent_message
+        
+    except Exception as e:
+        logging.error(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
+        return None
 
 
 async def process_successful_payment(session: AsyncSession, bot: Bot,
@@ -273,10 +307,12 @@ async def process_successful_payment(session: AsyncSession, bot: Bot,
                 if db_user and db_user.referred_by_id:
                     inviter = await user_dal.get_user_by_id(
                         session, db_user.referred_by_id)
-                    if inviter and inviter.first_name:
-                        inviter_name_display = inviter.first_name
-                    elif inviter and inviter.username:
-                        inviter_name_display = f"@{inviter.username}"
+                    if inviter:
+                        safe_name = sanitize_display_name(inviter.first_name) if inviter.first_name else None
+                        if safe_name:
+                            inviter_name_display = safe_name
+                        elif inviter.username:
+                            inviter_name_display = username_for_display(inviter.username, with_at=False)
 
                 details_message = _(
                     "payment_successful_with_referral_bonus_full",
@@ -309,15 +345,18 @@ async def process_successful_payment(session: AsyncSession, bot: Bot,
                 details_message = _("payment_successful_error_details")
 
             details_markup = get_connect_and_main_keyboard(
-                user_lang, i18n, settings, config_link
+                user_lang, i18n, settings, config_link, preserve_message=True
             )
+        
+        # ИЗМЕНЕНО: Используем новую функцию для отправки с очисткой предыдущих сообщений
         try:
-            await bot.send_message(
-                user_id,
-                details_message,
+            await send_message_with_cleanup(
+                bot=bot,
+                user_id=user_id,
+                text=details_message,
                 reply_markup=details_markup,
                 parse_mode="HTML",
-                disable_web_page_preview=True,
+                disable_web_page_preview=True
             )
         except Exception as e_notify:
             logging.error(
@@ -389,7 +428,14 @@ async def process_cancelled_payment(session: AsyncSession, bot: Bot,
         if db_user and db_user.language_code: user_lang = db_user.language_code
 
         _ = lambda key, **kwargs: i18n.gettext(user_lang, key, **kwargs)
-        await bot.send_message(user_id, _("payment_failed"))
+        
+        # ИЗМЕНЕНО: Используем новую функцию для отправки с очисткой предыдущих сообщений
+        await send_message_with_cleanup(
+            bot=bot,
+            user_id=user_id,
+            text=_("payment_failed"),
+            parse_mode="HTML"
+        )
 
     except Exception as e_process_cancel:
         logging.error(
@@ -566,6 +612,7 @@ async def yookassa_webhook_route(request: web.Request):
                                         except Exception:
                                             await session.rollback()
                                         # Notify user about successful binding with Back button
+                                        # ИЗМЕНЕНО: Используем новую функцию для отправки с очисткой предыдущих сообщений
                                         try:
                                             # Use user's DB language for bind success notification
                                             i18n_lang = settings.DEFAULT_LANGUAGE
@@ -575,10 +622,13 @@ async def yookassa_webhook_route(request: web.Request):
                                                 i18n_lang = db_user.language_code
                                             _ = lambda key, **kwargs: i18n_instance.gettext(i18n_lang, key, **kwargs)
                                             from bot.keyboards.inline.user_keyboards import get_back_to_payment_methods_keyboard
-                                            await bot.send_message(
-                                                chat_id=user_id,
+                                            
+                                            await send_message_with_cleanup(
+                                                bot=bot,
+                                                user_id=user_id,
                                                 text=_("payment_method_bound_success"),
-                                                reply_markup=get_back_to_payment_methods_keyboard(i18n_lang, i18n_instance)
+                                                reply_markup=get_back_to_payment_methods_keyboard(i18n_lang, i18n_instance),
+                                                parse_mode="HTML"
                                             )
                                         except Exception:
                                             pass
