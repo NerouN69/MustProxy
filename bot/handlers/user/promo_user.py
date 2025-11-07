@@ -16,6 +16,7 @@ from bot.keyboards.inline.user_keyboards import (
 )
 from datetime import datetime
 from bot.middlewares.i18n import JsonI18n
+from bot.services.panel_api_service import PanelApiService
 
 from .start import send_main_menu
 
@@ -181,6 +182,7 @@ async def process_promo_code_input(message: types.Message, state: FSMContext,
 async def cancel_promo_input_via_button(
         callback: types.CallbackQuery, state: FSMContext, settings: Settings,
         i18n_data: dict, subscription_service: SubscriptionService,
+        panel_service: PanelApiService,
         session: AsyncSession):
     current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
     i18n: Optional[JsonI18n] = i18n_data.get("i18n_instance")
@@ -200,6 +202,7 @@ async def cancel_promo_input_via_button(
                              settings,
                              i18n_data,
                              subscription_service,
+                             panel_service,
                              session,
                              is_edit=True)
     else:

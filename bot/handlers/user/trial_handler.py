@@ -14,6 +14,7 @@ from bot.keyboards.inline.user_keyboards import (
     get_connect_and_main_keyboard,
 )
 from bot.middlewares.i18n import JsonI18n
+from bot.services.panel_api_service import PanelApiService
 from .start import send_main_menu
 
 router = Router(name="user_trial_router")
@@ -200,7 +201,7 @@ async def confirm_activate_trial_handler(
             pass
 
         await send_main_menu(
-            callback, settings, i18n_data, subscription_service, session, is_edit=True
+            callback, settings, i18n_data, subscription_service, panel_service, session, is_edit=True
         )
         return
     if await subscription_service.has_had_any_subscription(session, user_id):
@@ -211,7 +212,7 @@ async def confirm_activate_trial_handler(
         except Exception:
             pass
         await send_main_menu(
-            callback, settings, i18n_data, subscription_service, session, is_edit=True
+            callback, settings, i18n_data, subscription_service, panel_service, session, is_edit=True
         )
         return
 
@@ -321,8 +322,9 @@ async def cancel_trial_activation(
     settings: Settings,
     i18n_data: dict,
     subscription_service: SubscriptionService,
+    panel_service: PanelApiService,
     session: AsyncSession,
 ):
     await send_main_menu(
-        callback, settings, i18n_data, subscription_service, session, is_edit=True
+        callback, settings, i18n_data, subscription_service, panel_service, session, is_edit=True
     )
