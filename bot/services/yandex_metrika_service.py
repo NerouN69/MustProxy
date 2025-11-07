@@ -49,7 +49,9 @@ class YandexMetrikaService:
         self,
         session: AsyncSession,
         user_id: int,
-        client_id: str
+        client_id: str,
+        keitaro_subid: Optional[str] = None,
+        keitaro_service: Optional[Any] = None
     ) -> bool:
         """Отправляет событие install при первом запуске бота пользователем"""
         if not self.configured or not self._validate_client_id(client_id):
@@ -57,9 +59,9 @@ class YandexMetrikaService:
 
         # Сохраняем или обновляем tracking
         tracking = await yandex_tracking_dal.create_yandex_tracking(
-            session, user_id, client_id, self.counter_id
+            session, user_id, client_id, self.counter_id, keitaro_subid
         )
-        
+
         if not tracking:
             logging.error(f"Failed to create tracking for user {user_id}")
             return False
@@ -75,13 +77,13 @@ class YandexMetrikaService:
             'et': str(int(time.time())),
             'ms': self.measurement_token
         }
-        
+
         pageview_success = await self._send_request(pageview_params, "pageview")
-        
+
         if not pageview_success:
             logging.error(f"Failed to create visit for user {user_id}")
             return False
-        
+
         # Небольшая задержка между запросами
         await asyncio.sleep(0.5)
 
@@ -97,10 +99,21 @@ class YandexMetrikaService:
         }
 
         success = await self._send_request(event_params, "install")
-        
+
         if success:
             logging.info(f"Sent install event for user {user_id}, client_id: {client_id[:10]}...")
-        
+
+            # Отправляем постбек на Keitaro если есть subid
+            if keitaro_subid and keitaro_service:
+                try:
+                    keitaro_success = await keitaro_service.send_install_postback(keitaro_subid)
+                    if keitaro_success:
+                        logging.info(f"Sent Keitaro install postback for user {user_id}, subid: {keitaro_subid}")
+                    else:
+                        logging.warning(f"Failed to send Keitaro install postback for user {user_id}")
+                except Exception as e:
+                    logging.error(f"Error sending Keitaro install postback: {e}", exc_info=True)
+
         return success
 
     async def send_purchase_event(
@@ -108,7 +121,8 @@ class YandexMetrikaService:
         session: AsyncSession,
         user_id: int,
         payment_amount: float,
-        payment_id: str
+        payment_id: str,
+        keitaro_service: Optional[Any] = None
     ) -> bool:
         """Отправляет событие purchase при успешной оплате"""
         if not self.configured:
@@ -127,6 +141,7 @@ class YandexMetrikaService:
             return True
 
         client_id = tracking.yandex_client_id
+        keitaro_subid = tracking.keitaro_subid
         
         # Проверяем, нужно ли создать новый визит
         last_visit = tracking.last_visit_time or tracking.first_visit_time
@@ -174,18 +189,34 @@ class YandexMetrikaService:
         }
 
         success = await self._send_request(event_params, "purchase")
-        
+
         if success:
             # Сохраняем информацию об отправленной конверсии
             await yandex_tracking_dal.save_conversion_record(
-                session, 
-                user_id, 
-                payment_id, 
+                session,
+                user_id,
+                payment_id,
                 payment_amount
             )
-            
+
             logging.info(f"Sent purchase event for user {user_id}, payment {payment_id}, amount {payment_amount}")
-        
+
+            # Отправляем постбек на Keitaro если есть subid
+            if keitaro_subid and keitaro_service:
+                try:
+                    keitaro_success = await keitaro_service.send_purchase_postback(
+                        keitaro_subid, payment_amount
+                    )
+                    if keitaro_success:
+                        logging.info(
+                            f"Sent Keitaro purchase postback for user {user_id}, "
+                            f"subid: {keitaro_subid}, amount: {payment_amount}"
+                        )
+                    else:
+                        logging.warning(f"Failed to send Keitaro purchase postback for user {user_id}")
+                except Exception as e:
+                    logging.error(f"Error sending Keitaro purchase postback: {e}", exc_info=True)
+
         return success
 
     async def get_tracking_statistics(self, session: AsyncSession) -> Dict[str, Any]:

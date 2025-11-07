@@ -368,7 +368,8 @@ async def ensure_required_channel_subscription(
 @router.message(CommandStart())
 @router.message(CommandStart(magic=F.args.regexp(r"^ref_(\d+)$").as_("ref_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^promo_(\w+)$").as_("promo_match")))
-@router.message(CommandStart(magic=F.args.regexp(r"^yandex_(.+)$").as_("yandex_match")))
+@router.message(CommandStart(magic=F.args.regexp(r"^yandex_([^_]+)_(.+)$").as_("yandex_match")))
+@router.message(CommandStart(magic=F.args.regexp(r"^yandex_(.+)$").as_("yandex_match_legacy")))
 @router.message(CommandStart(magic=F.args.regexp(r"^(?!ref_|promo_|yandex_)([A-Za-z0-9_\-]{2,64})$").as_("ad_param_match")))
 async def start_command_handler(message: types.Message,
                                 state: FSMContext,
@@ -380,6 +381,7 @@ async def start_command_handler(message: types.Message,
                                 ref_match: Optional[re.Match] = None,
                                 promo_match: Optional[re.Match] = None,
                                 yandex_match: Optional[re.Match] = None,
+                                yandex_match_legacy: Optional[re.Match] = None,
                                 ad_param_match: Optional[re.Match] = None):
     await state.clear()
     current_lang = i18n_data.get("current_language", settings.DEFAULT_LANGUAGE)
@@ -394,6 +396,7 @@ async def start_command_handler(message: types.Message,
     promo_code_to_apply: Optional[str] = None
     ad_start_param: Optional[str] = None
     yandex_client_id: Optional[str] = None
+    keitaro_subid: Optional[str] = None
 
     if ref_match:
         potential_referrer_id = int(ref_match.group(1))
@@ -403,8 +406,14 @@ async def start_command_handler(message: types.Message,
         promo_code_to_apply = promo_match.group(1)
         logging.info(f"User {user_id} started with promo code: {promo_code_to_apply}")
     elif yandex_match:
+        # Новый формат: yandex_{client_id}_{subid}
         yandex_client_id = yandex_match.group(1)
-        logging.info(f"User {user_id} started with Yandex client_id: {yandex_client_id}")
+        keitaro_subid = yandex_match.group(2)
+        logging.info(f"User {user_id} started with Yandex client_id: {yandex_client_id}, subid: {keitaro_subid}")
+    elif yandex_match_legacy:
+        # Старый формат для обратной совместимости: yandex_{client_id}
+        yandex_client_id = yandex_match_legacy.group(1)
+        logging.info(f"User {user_id} started with Yandex client_id (legacy): {yandex_client_id}")
     elif ad_param_match:
         ad_start_param = ad_param_match.group(1)
         logging.info(f"User {user_id} started with ad start param: {ad_start_param}")
@@ -484,26 +493,28 @@ async def start_command_handler(message: types.Message,
                     f"Failed to update existing user {user_id} in session: {e_update}",
                     exc_info=True)
 
-    # Обработка Yandex Client ID
+    # Обработка Yandex Client ID и Keitaro SubID
     if yandex_client_id:
         try:
             from bot.services.yandex_metrika_service import YandexMetrikaService
-            
+            from bot.services.keitaro_service import KeitaroService
+
             bot_info = await message.bot.get_me()
             bot_username = bot_info.username or "unknown_bot"
             metrika_service = YandexMetrikaService(settings, bot_username)
-            
+            keitaro_service = KeitaroService()
+
             if not metrika_service._validate_client_id(yandex_client_id):
                 logging.warning(f"Invalid Yandex client_id format received: {yandex_client_id} from user {user_id}")
             else:
                 # Отправляем событие install при первом запуске
                 install_success = await metrika_service.send_install_event(
-                    session, user_id, yandex_client_id
+                    session, user_id, yandex_client_id, keitaro_subid, keitaro_service
                 )
-                
+
                 if install_success:
                     await session.commit()
-                    logging.info(f"Sent install event for user {user_id} with client_id {yandex_client_id}")
+                    logging.info(f"Sent install event for user {user_id} with client_id {yandex_client_id}, subid {keitaro_subid}")
                 else:
                     logging.error(f"Failed to send install event for user {user_id}")
                     await session.rollback()

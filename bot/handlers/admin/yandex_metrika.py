@@ -133,23 +133,30 @@ async def yandex_test_callback(callback: types.CallbackQuery, settings: Settings
         # Используем тестовый client_id
         test_client_id = ''.join(str(secrets.randbelow(10)) for _ in range(19))
         test_user_id = callback.from_user.id
-        
+        test_subid = "test_subid_123"  # Тестовый subid для Keitaro
+
         # Отправляем событие install
+        from bot.services.keitaro_service import KeitaroService
+        keitaro_service = KeitaroService()
+
         install_result = await metrika_service.send_install_event(
             session=session,
             user_id=test_user_id,
-            client_id=test_client_id
+            client_id=test_client_id,
+            keitaro_subid=test_subid,
+            keitaro_service=keitaro_service
         )
-        
+
         # Небольшая задержка между событиями
         await asyncio.sleep(1)
-        
+
         # Отправляем событие purchase
         purchase_result = await metrika_service.send_purchase_event(
             session=session,
             user_id=test_user_id,
             payment_amount=100.0,
-            payment_id=f"test_{callback.message.message_id}"
+            payment_id=f"test_{callback.message.message_id}",
+            keitaro_service=keitaro_service
         )
         
         result_text = (

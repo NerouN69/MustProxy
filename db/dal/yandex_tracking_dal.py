@@ -11,55 +11,52 @@ from ..models import YandexTracking, YandexConversion, Payment
 
 
 async def create_yandex_tracking(
-    session: AsyncSession, 
-    user_id: int, 
+    session: AsyncSession,
+    user_id: int,
     yandex_client_id: str,
-    counter_id: Optional[str] = None
+    counter_id: Optional[str] = None,
+    keitaro_subid: Optional[str] = None
 ) -> Optional[YandexTracking]:
     """Создает или обновляет запись отслеживания Яндекс.Метрики для пользователя"""
-    
+
     try:
         # Проверяем, существует ли запись для user_id
         existing = await get_tracking_by_user_id(session, user_id)
         if existing:
+            update_values = {
+                "last_visit_time": datetime.now(timezone.utc),
+                "visit_count": YandexTracking.visit_count + 1
+            }
+
+            # Обновляем client_id если он изменился
             if existing.yandex_client_id != yandex_client_id:
-                # Обновляем yandex_client_id, если он изменился
-                stmt = (
-                    update(YandexTracking)
-                    .where(YandexTracking.user_id == user_id)
-                    .values(
-                        yandex_client_id=yandex_client_id, 
-                        counter_id=counter_id,
-                        last_visit_time=datetime.now(timezone.utc),
-                        visit_count=YandexTracking.visit_count + 1
-                    )
-                )
-                await session.execute(stmt)
-                await session.flush()
-                await session.refresh(existing)
+                update_values["yandex_client_id"] = yandex_client_id
+                update_values["counter_id"] = counter_id
                 logging.info(f"Updated YandexTracking for user {user_id} with new client_id {yandex_client_id}")
-            else:
-                # Обновляем только время последнего визита
-                stmt = (
-                    update(YandexTracking)
-                    .where(YandexTracking.user_id == user_id)
-                    .values(
-                        last_visit_time=datetime.now(timezone.utc),
-                        visit_count=YandexTracking.visit_count + 1
-                    )
-                )
-                await session.execute(stmt)
-                await session.flush()
-                await session.refresh(existing)
-                logging.info(f"Updated visit time for user {user_id}")
+
+            # Обновляем keitaro_subid если он предоставлен и отличается
+            if keitaro_subid and existing.keitaro_subid != keitaro_subid:
+                update_values["keitaro_subid"] = keitaro_subid
+                logging.info(f"Updated keitaro_subid for user {user_id}: {keitaro_subid}")
+
+            stmt = (
+                update(YandexTracking)
+                .where(YandexTracking.user_id == user_id)
+                .values(**update_values)
+            )
+            await session.execute(stmt)
+            await session.flush()
+            await session.refresh(existing)
+            logging.info(f"Updated visit time for user {user_id}")
             return existing
-        
+
         # Создаём новую запись, если не существует
         now = datetime.now(timezone.utc)
         tracking_data = {
             "user_id": user_id,
             "yandex_client_id": yandex_client_id,
             "counter_id": counter_id,
+            "keitaro_subid": keitaro_subid,
             "first_visit_time": now,
             "last_visit_time": now,
             "visit_count": 1
@@ -68,7 +65,7 @@ async def create_yandex_tracking(
         session.add(new_tracking)
         await session.flush()
         await session.refresh(new_tracking)
-        logging.info(f"YandexTracking created for user {user_id} with client_id {yandex_client_id}")
+        logging.info(f"YandexTracking created for user {user_id} with client_id {yandex_client_id}, subid {keitaro_subid}")
         return new_tracking
     except Exception as e:
         logging.error(f"Failed to create/update YandexTracking: {e}", exc_info=True)
