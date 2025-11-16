@@ -369,7 +369,7 @@ async def ensure_required_channel_subscription(
 @router.message(CommandStart(magic=F.args.regexp(r"^ref_(\d+)$").as_("ref_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^promo_(\w+)$").as_("promo_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^yandex_([^_]+)_(.+)$").as_("yandex_match")))
-@router.message(CommandStart(magic=F.args.regexp(r"^yandex_(.+)$").as_("yandex_match_legacy")))
+@router.message(CommandStart(magic=F.args.regexp(r"^yandex_([^_]+)$").as_("yandex_match_legacy")))
 @router.message(CommandStart(magic=F.args.regexp(r"^(?!ref_|promo_|yandex_)([A-Za-z0-9_\-]{2,64})$").as_("ad_param_match")))
 async def start_command_handler(message: types.Message,
                                 state: FSMContext,
