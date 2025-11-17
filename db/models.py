@@ -272,16 +272,17 @@ class YandexTracking(Base):
     user_id = Column(BigInteger, ForeignKey("users.user_id"), nullable=False, index=True)
     yandex_client_id = Column(String, nullable=False, index=True)
     counter_id = Column(String, nullable=True)  # Номер счетчика Яндекс.Метрики
-    
+    keitaro_subid = Column(String, nullable=True, index=True)  # Keitaro subid для постбеков
+
     # Информация о визитах
     first_visit_time = Column(DateTime(timezone=True), server_default=func.now())
     last_visit_time = Column(DateTime(timezone=True), server_default=func.now())  # Добавлено значение по умолчанию
     visit_count = Column(Integer, default=1)
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     user = relationship("User")
-    
+
     __table_args__ = (
         UniqueConstraint('user_id', 'yandex_client_id', name='uq_user_yandex_client'),
     )

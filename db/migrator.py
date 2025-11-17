@@ -58,52 +58,52 @@ def _migration_0002_yandex_tracking(connection: Connection) -> None:
         if 'yandex_tracking' not in inspector.get_table_names():
             logging.info("Table yandex_tracking doesn't exist yet, skipping migrations")
             return
-        
+
         # Проверяем наличие колонок и добавляем недостающие
         existing_columns = {col['name'] for col in inspector.get_columns('yandex_tracking')}
-        
+
         # Добавляем last_visit_time если её нет
         if 'last_visit_time' not in existing_columns:
             connection.execute(text(
                 "ALTER TABLE yandex_tracking ADD COLUMN last_visit_time TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
             ))
             logging.info("Added last_visit_time column to yandex_tracking")
-        
+
         # Добавляем visit_count если её нет
         if 'visit_count' not in existing_columns:
             connection.execute(text(
                 "ALTER TABLE yandex_tracking ADD COLUMN visit_count INTEGER DEFAULT 1"
             ))
             logging.info("Added visit_count column to yandex_tracking")
-            
+
         # Обновляем существующие записи, где last_visit_time = NULL
         connection.execute(text("""
-            UPDATE yandex_tracking 
+            UPDATE yandex_tracking
             SET last_visit_time = COALESCE(first_visit_time, NOW())
             WHERE last_visit_time IS NULL
         """))
-        
+
         connection.execute(text("""
-            UPDATE yandex_tracking 
-            SET visit_count = 1 
+            UPDATE yandex_tracking
+            SET visit_count = 1
             WHERE visit_count IS NULL
         """))
-        
+
         # Создаем индексы, если их нет
         existing_indexes = {idx['name'] for idx in inspector.get_indexes('yandex_tracking')}
-        
+
         if 'idx_yandex_tracking_visit_count' not in existing_indexes:
             connection.execute(text(
                 "CREATE INDEX idx_yandex_tracking_visit_count ON yandex_tracking(visit_count)"
             ))
             logging.info("Created index idx_yandex_tracking_visit_count")
-            
+
         if 'idx_yandex_tracking_last_visit' not in existing_indexes:
             connection.execute(text(
                 "CREATE INDEX idx_yandex_tracking_last_visit ON yandex_tracking(last_visit_time)"
             ))
             logging.info("Created index idx_yandex_tracking_last_visit")
-            
+
         # Проверяем и создаем таблицу yandex_conversions если её нет
         if 'yandex_conversions' not in inspector.get_table_names():
             connection.execute(text("""
@@ -117,7 +117,7 @@ def _migration_0002_yandex_tracking(connection: Connection) -> None:
                 )
             """))
             logging.info("Created yandex_conversions table")
-            
+
             # Создаем индексы для yandex_conversions
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_yandex_conversions_user_id ON yandex_conversions(user_id)"
@@ -126,13 +126,45 @@ def _migration_0002_yandex_tracking(connection: Connection) -> None:
                 "CREATE INDEX IF NOT EXISTS idx_yandex_conversions_payment_id ON yandex_conversions(payment_id)"
             ))
             logging.info("Created indexes for yandex_conversions")
-        
+
         logging.info("Yandex tracking migrations completed successfully")
-        
+
     except Exception as e:
         logging.warning(f"Failed to run Yandex tracking migrations: {e}")
         # Не прерываем работу бота из-за неудачных миграций
         raise  # Изменено: теперь пробрасываем исключение для корректной работы с транзакциями
+
+
+def _migration_0003_add_keitaro_subid(connection: Connection) -> None:
+    """Добавление поля keitaro_subid в yandex_tracking для отслеживания Keitaro SubID"""
+    try:
+        inspector = inspect(connection)
+        if 'yandex_tracking' not in inspector.get_table_names():
+            logging.info("Table yandex_tracking doesn't exist yet, skipping keitaro_subid migration")
+            return
+
+        existing_columns = {col['name'] for col in inspector.get_columns('yandex_tracking')}
+
+        # Добавляем keitaro_subid если её нет
+        if 'keitaro_subid' not in existing_columns:
+            connection.execute(text(
+                "ALTER TABLE yandex_tracking ADD COLUMN keitaro_subid VARCHAR"
+            ))
+            logging.info("Added keitaro_subid column to yandex_tracking")
+
+            # Создаем индекс для keitaro_subid
+            existing_indexes = {idx['name'] for idx in inspector.get_indexes('yandex_tracking')}
+            if 'idx_yandex_tracking_keitaro_subid' not in existing_indexes:
+                connection.execute(text(
+                    "CREATE INDEX idx_yandex_tracking_keitaro_subid ON yandex_tracking(keitaro_subid)"
+                ))
+                logging.info("Created index idx_yandex_tracking_keitaro_subid")
+
+        logging.info("Keitaro SubID migration completed successfully")
+
+    except Exception as e:
+        logging.error(f"Failed to run Keitaro SubID migration: {e}")
+        raise
 
 
 # Список всех миграций в порядке применения
@@ -146,6 +178,11 @@ MIGRATIONS: List[Migration] = [
         id="0002_yandex_tracking",
         description="Add Yandex tracking tables and columns",
         upgrade=_migration_0002_yandex_tracking,
+    ),
+    Migration(
+        id="0003_add_keitaro_subid",
+        description="Add keitaro_subid column to yandex_tracking for Keitaro postback tracking",
+        upgrade=_migration_0003_add_keitaro_subid,
     ),
 ]
 

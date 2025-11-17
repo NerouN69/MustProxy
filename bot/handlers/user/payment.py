@@ -153,24 +153,27 @@ async def process_successful_payment(session: AsyncSession, bot: Bot,
         
         try:
             from bot.services.yandex_metrika_service import YandexMetrikaService
-            
+            from bot.services.keitaro_service import KeitaroService
+
             bot_username = "unknown_bot"
             try:
                 bot_info = await bot.get_me()
                 bot_username = bot_info.username or "unknown_bot"
             except Exception:
                 pass
-            
+
             metrika_service = YandexMetrikaService(settings, bot_username)
-            
+            keitaro_service = KeitaroService()
+
             if metrika_service.configured:
                 purchase_success = await metrika_service.send_purchase_event(
                     session=session,
                     user_id=user_id,
                     payment_amount=payment_value,
-                    payment_id=str(payment_db_id)
+                    payment_id=str(payment_db_id),
+                    keitaro_service=keitaro_service
                 )
-                
+
                 if purchase_success:
                     logging.info(f"Sent purchase event to Yandex Metrika for user {user_id}, payment {payment_db_id}")
                 else:

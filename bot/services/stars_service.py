@@ -179,24 +179,27 @@ class StarsService:
 
         try:
             from bot.services.yandex_metrika_service import YandexMetrikaService
-            
+            from bot.services.keitaro_service import KeitaroService
+
             bot_username = "unknown_bot"
             try:
                 bot_info = await self.bot.get_me()
                 bot_username = bot_info.username or "unknown_bot"
             except Exception:
                 pass
-            
+
             metrika_service = YandexMetrikaService(self.settings, bot_username)
-            
+            keitaro_service = KeitaroService()
+
             if metrika_service.configured:
                 purchase_success = await metrika_service.send_purchase_event(
                     session=session,
                     user_id=message.from_user.id,
                     payment_amount=float(stars_amount),
-                    payment_id=str(payment_db_id)
+                    payment_id=str(payment_db_id),
+                    keitaro_service=keitaro_service
                 )
-                
+
                 if purchase_success:
                     logging.info(f"Sent purchase event for Stars payment, user {message.from_user.id}")
                 else:
