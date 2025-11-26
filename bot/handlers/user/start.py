@@ -368,9 +368,10 @@ async def ensure_required_channel_subscription(
 @router.message(CommandStart())
 @router.message(CommandStart(magic=F.args.regexp(r"^ref_(\d+)$").as_("ref_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^promo_(\w+)$").as_("promo_match")))
+@router.message(CommandStart(magic=F.args.regexp(r"^buy$").as_("buy_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^yandex_([^_]+)_(.+)$").as_("yandex_match")))
 @router.message(CommandStart(magic=F.args.regexp(r"^yandex_([^_]+)$").as_("yandex_match_legacy")))
-@router.message(CommandStart(magic=F.args.regexp(r"^(?!ref_|promo_|yandex_)([A-Za-z0-9_\-]{2,64})$").as_("ad_param_match")))
+@router.message(CommandStart(magic=F.args.regexp(r"^(?!ref_|promo_|yandex_|buy)([A-Za-z0-9_\-]{2,64})$").as_("ad_param_match")))
 async def start_command_handler(message: types.Message,
                                 state: FSMContext,
                                 settings: Settings,
@@ -380,6 +381,7 @@ async def start_command_handler(message: types.Message,
                                 session: AsyncSession,
                                 ref_match: Optional[re.Match] = None,
                                 promo_match: Optional[re.Match] = None,
+                                buy_match: Optional[re.Match] = None,
                                 yandex_match: Optional[re.Match] = None,
                                 yandex_match_legacy: Optional[re.Match] = None,
                                 ad_param_match: Optional[re.Match] = None):
@@ -397,6 +399,7 @@ async def start_command_handler(message: types.Message,
     ad_start_param: Optional[str] = None
     yandex_client_id: Optional[str] = None
     keitaro_subid: Optional[str] = None
+    show_buy_menu: bool = False
 
     if ref_match:
         potential_referrer_id = int(ref_match.group(1))
@@ -405,6 +408,9 @@ async def start_command_handler(message: types.Message,
     elif promo_match:
         promo_code_to_apply = promo_match.group(1)
         logging.info(f"User {user_id} started with promo code: {promo_code_to_apply}")
+    elif buy_match:
+        show_buy_menu = True
+        logging.info(f"User {user_id} started with buy parameter")
     elif yandex_match:
         # Новый формат: yandex_{client_id}_{subid}
         yandex_client_id = yandex_match.group(1)
@@ -591,13 +597,18 @@ async def start_command_handler(message: types.Message,
             logging.error(f"Error auto-applying promo code '{promo_code_to_apply}' for user {user_id}: {e}")
             await session.rollback()
 
-    await send_main_menu(message,
-                         settings,
-                         i18n_data,
-                         subscription_service,
-                         panel_service,
-                         session,
-                         is_edit=False)
+    # Показываем меню с тарифами если пришли с параметром buy
+    if show_buy_menu:
+        from bot.handlers.user.subscription.core import display_subscription_options
+        await display_subscription_options(message, i18n_data, settings, session)
+    else:
+        await send_main_menu(message,
+                             settings,
+                             i18n_data,
+                             subscription_service,
+                             panel_service,
+                             session,
+                             is_edit=False)
 
 
 @router.callback_query(F.data == "channel_subscription:verify")
